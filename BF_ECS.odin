@@ -24,8 +24,8 @@
 // Core.engine_scheduler_get(), the DAG fires these systems each tick.
 package BF_ECS
 
-import "core:log"
 import "../../Core"
+import "core:log"
 
 // === MODULE_IDENTITY (parsed by rbs) ===
 IDENTITY :: Core.Lib_Descriptor {
@@ -38,14 +38,16 @@ IDENTITY :: Core.Lib_Descriptor {
 	type             = .ECS,
 	flags            = {.Runtime, .Provides_Service},
 	capabilities     = {.ECS},
-	dependencies     = {{
-		name            = "BF_DAG",
-		min_version     = Core.Version{0, 0, 1},
-		max_version     = Core.Version{9, 9, 9},
-		has_max_version = true,
-		has_min_version = true,
-		optional        = false,
-	}},
+	dependencies     = {
+		{
+			name = "BF_DAG",
+			min_version = Core.Version{0, 0, 1},
+			max_version = Core.Version{9, 9, 9},
+			has_max_version = true,
+			has_min_version = true,
+			optional = false,
+		},
+	},
 	dependency_count = 1,
 }
 // === END MODULE_IDENTITY ===
@@ -91,11 +93,18 @@ module_world :: proc() -> ^World {
 
 module_load :: proc(ctx: ^Core.Lib_Context) -> bool {
 	_ = ctx
-	log.info("[ECS] loaded")
+	log.info("[BF_ECS] loaded")
 	return true
 }
 
 module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
+	// *Allocate the World.
+	MODULE_STATE_VALUE.world = world_create(context.allocator)
+	if MODULE_STATE_VALUE.world == nil {
+		log.error("[BF_ECS] failed to allocate World")
+		return false
+	}
+
 	// Look up the registration API so we can declare systems + the
 	// World service before the component manager promotes us.
 	api_raw := Core.lib_context_query(
@@ -104,44 +113,34 @@ module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
 		Core.COMPONENT_REGISTRATION_API_VERSION,
 	)
 	if api_raw == nil {
-		log.error("[ECS] component_registration interface unavailable")
+		log.error("[BF_ECS] component_registration interface unavailable")
 		return false
 	}
 	api := cast(^Core.Component_Registration_API)api_raw
 
-	// ------------------------------------------------------------
-	// 1. Allocate the World.
-	// ------------------------------------------------------------
-	MODULE_STATE_VALUE.world = world_create(context.allocator)
-	if MODULE_STATE_VALUE.world == nil {
-		log.error("[ECS] failed to allocate World")
-		return false
-	}
 
-	// ------------------------------------------------------------
-	// 2. Register the systems that participate in the DAG.
-	// ------------------------------------------------------------
+	// *Register the systems that participate in the DAG.
 	// Each system is a proc(rawptr) callback. The DAG compiles
 	// dependencies from System_Info masks/stage; for the minimum
 	// cut both systems sit at stage = .Update with empty masks,
 	// which the engine maps to default `.Update` Stage info.
 
 	tick_reg := Core.System_Registration {
-		name    = ECS_SYSTEM_NAME_TICK,
+		name = BF_ECS_SYSTEM_NAME_TICK,
 		execute = ecs_system_world_tick,
-		info    = Core.System_Info{stage = .Update},
+		info = Core.System_Info{stage = .Update},
 	}
 	if !api.add_system(ctx, tick_reg) {
-		log.error("[ECS] failed to register %s", ECS_SYSTEM_NAME_TICK)
+		log.error("[BF_ECS] failed to register %s", ECS_SYSTEM_NAME_TICK)
 		world_destroy(MODULE_STATE_VALUE.world)
 		MODULE_STATE_VALUE.world = nil
 		return false
 	}
 
 	part_reg := Core.System_Registration {
-		name    = ECS_SYSTEM_NAME_PART,
+		name = ECS_SYSTEM_NAME_PART,
 		execute = ecs_system_partition_stale,
-		info    = Core.System_Info{stage = .Update},
+		info = Core.System_Info{stage = .Update},
 	}
 	if !api.add_system(ctx, part_reg) {
 		log.error("[ECS] failed to register %s", ECS_SYSTEM_NAME_PART)
@@ -150,9 +149,7 @@ module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
 		return false
 	}
 
-	// ------------------------------------------------------------
-	// 3. Register a service so application code can reach the World.
-	// ------------------------------------------------------------
+	// *Register a service so application code can reach the World.
 	// The Core service registry will call ecs_world_destroy when the
 	// module unloads — that frees the World as part of normal teardown.
 	sreg := Core.Service_Registration {
@@ -167,17 +164,14 @@ module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
 		return false
 	}
 
-	log.infof(
-		"[ECS] registered %d systems (tick + partition-stale) and world service.",
-		2,
-	)
+	log.infof("[BF_ECS] registered %d systems (tick + partition-stale) and world service.", 2)
 	return true
 }
 
 module_activate :: proc(ctx: ^Core.Lib_Context) -> bool {
 	_ = ctx
-	log.infof("[ECS] activated — world=%p", MODULE_STATE_VALUE.world)
-	return true
+	log.infof("[BF_ECS] activated — world=%p", MODULE_STATE_VALUE.world)
+	return MODULE_STATE_VALUE.world != nil
 }
 
 module_deactivate :: proc(ctx: ^Core.Lib_Context) {
@@ -186,14 +180,14 @@ module_deactivate :: proc(ctx: ^Core.Lib_Context) {
 
 module_unload :: proc(ctx: ^Core.Lib_Context) {
 	_ = ctx
-	// World destruction is owned by the service registry's destroy
+	// World destruction is owned by the Core service registry's destroy
 	// callback (see ecs_world_destroy). The MODULE_STATE_VALUE.world
 	// pointer is invalidated there. Nothing else to free here.
-	log.info("[ECS] unloaded")
+	log.info("[BF_ECS] unloaded")
 }
 
 // ============================================================================
-// SERVICE
+//* SERVICE
 // ============================================================================
 
 // Service name used by application code and the engine to find the

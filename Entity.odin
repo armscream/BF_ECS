@@ -1,47 +1,59 @@
 // Engine/src/Modules/BF_ECS/Entity.odin
 package BF_ECS
 
-import "core:encoding/entity"
-import hm "core:container/handle_map"
-import "core:mem"
+import ode "/ode_ecs/src"
 
-// Entity with generational handles, will itterate further on this.
-Entity :: hm.Handle64
-ENTITY_INVALID :: Entity{}
+//* Entity
+// BF_ECS entities are ODE_ECS entities. 
 
-Entity_Record :: struct {
-	handle:    Entity,
-	//placeholder for archetype or ECS storage location.
-	archetype: u32,
-	row:       u32,
+// ODE_ECS uses DELETED_INDEX for invalid/expired IDs.
+ENTITY_INVALID :: Entity {
+	ix = ode.DELETED_INDEX
 }
 
-Entity_Manager :: struct {
-	allocator:   mem.Allocator,
-	entities:    hm.Dynamic_Handle_Map(Entity_Record, Entity),
-	alive_count: u32,
-}
-entity_manager_init :: proc(manager: ^Entity_Manager, allocator: mem.Allocator) {
-	manager.allocator = allocator
-	hm.dynamic_init(&manager.entities, allocator)
-	manager.alive_count = 0
-}
-entity_manager_destroy :: proc(manager: ^Entity_Manager) {
-	hm.dynamic_destroy(&manager.entities)
-	manager^ = {}
+//* ENTITY STORE
+// ODE Overbase holds entity lifetime, while several ode databases can share the same entity namespace.
+Entity_Store :: struct {
+	overbase: ^ode.Overbase
 }
 
-entity_create :: proc(manager: ^Entity_Manager) -> Entity {
-	record :=  Entity_Record{}
-	entity, err := hm.add(&manager.entities, record)
-	assert(err == nil, "BF_ECS: Failed to allocate entity handle.") // TODO: Should i use log.error here?
+//* INITIALIZATION
+entity_store_init :: proc(store: ^Entity_Store, overbase: ^ode.Overbase) {
+	assert(store != nil)
+	assert(overbase != nil)
+	store.overbase = overbase
+}
+entity_store_destroy :: proc(store: ^Entity_Store){
+	if store == nil do return
+	store^ = {}
+}
 
-	record.handle  = entity
-	if stored, ok := hm.get(&manager.entities, entity); ok{stored^ = record}
-	manager.alive_count += 1
+//* CREATION / DESTRUCTION
+entity_create :: proc(store: ^Entity_Store) -> Entity {
+	assert(store != nil)
+	assert(store.overbase != nil)
+
+	entity, err := ode.create_entity(store.overbase)
+	if err != nil do return ENTITY_INVALID
 	return entity
 }
-entity_destroy :: proc(manager: ^Entity_Manager, entity: Entity) -> bool {
-	// TODO: Destroy entity
-	return ok
+entity_destroy :: proc(store: ^Entity_Store, entity: Entity) -> bool {
+	if store == nil || store.overbase == nil do return false
+	if !entity_is_alive(store, entity) do return false
+	err := ode.entity_destroy(store.overbase, entity)
+
+	return err == nil
+}
+
+//* VALIDATION
+entity_is_alive :: proc(store: ^Entity_Store, entity: Entity) -> bool {
+	if store == nil || store.overbase == nil do return false
+	if entity == ENTITY_INVALID do return false
+	return !ode.is_expired(store.overbase, entity)
+}
+
+//* UTILITY
+entity_count :: proc(store: ^Entity_Store) -> int {
+	if store == nil || store.overbase == nil do return 0
+	return ode.entities_len(store_overbase)
 }
