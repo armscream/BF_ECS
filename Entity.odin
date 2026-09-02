@@ -5,6 +5,7 @@ import ode "/ode_ecs/src"
 
 //* Entity
 // BF_ECS entities are ODE_ECS entities. 
+Entity :: ode.entity_id
 
 // ODE_ECS uses DELETED_INDEX for invalid/expired IDs.
 ENTITY_INVALID :: Entity {
@@ -40,7 +41,7 @@ entity_create :: proc(store: ^Entity_Store) -> Entity {
 entity_destroy :: proc(store: ^Entity_Store, entity: Entity) -> bool {
 	if store == nil || store.overbase == nil do return false
 	if !entity_is_alive(store, entity) do return false
-	err := ode.entity_destroy(store.overbase, entity)
+	err := ode.destroy_entity(store.overbase, entity)
 
 	return err == nil
 }

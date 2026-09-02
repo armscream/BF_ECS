@@ -80,7 +80,7 @@ MODULE_STATE :: struct {
 	world: ^World,
 }
 @(private)
-MODULE_STATE_VALUE: MODULE_STATE
+MODULE_STATE_VALUE.world = world_create(context.allocator)
 
 // Convenience: systems read this; module loaders also clear/nil it.
 module_world :: proc() -> ^World {

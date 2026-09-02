@@ -9,9 +9,9 @@ World_Settings :: struct {
 	// maximum # of simultaneously alive entities.
 	entities_capacity:        u32,
 	// # of component tables expected in the main gameplay DB.
-	tables_capacity:          int,
+	gameplay_tables_capacity:          int,
 	// # of preallocated views.
-	views_capacity:           int,
+	gameplay_views_capacity:           int,
 	// # of cmd buffers
 	command_buffers_capacity: int,
 }
@@ -19,8 +19,8 @@ World_Settings :: struct {
 // This is intentionally a capacity rather than a hard req't on the # of entities that will exist.
 WORLD_DEFAULT_SETTINGS :: World_Settings {
 	entities_capacity        = 65_536,
-	tables_capacity          = 128,
-	views_capacity           = 64,
+	gameplay_tables_capacity          = 128,
+	gameplay_views_capacity           = 64,
 	command_buffers_capacity = 32,
 }
 
@@ -41,7 +41,7 @@ World :: struct {
 	// All refer to the same entity IDs
 	overbase:  ode.Overbase,
 	entities:  Entity_Store,
-	gameplay:  World_Database, // main gameplay DB
+	gameplay:  Database, // main gameplay DB
 	registry:  Component_Registry, // Component schema
 	// frame state
 	tick:      u64,
@@ -69,28 +69,29 @@ world_create :: proc(
 	// Entity store
 	entity_store_init(&world.entities, &world.overbase)
 	// component registry
-	component_registry_init(&world.components, allocator, settings.tables_capacity)
+	component_registry_init(&world.components, allocator, settings.gameplay_tables_capacity)
 	// Gameplay DB
 	// This DB shares the overbase rather than creating it's own entity namespace.
-	world.gameplay.name = "Gameplay"
-	err = ode.database__init_from_overbase( // or init_from_overbase
-		&world.gameplay.ecs,
+	if !database_init(
+		&world.gameplay,
 		&world.overbase,
+		.Gameplay,
+		"Gameplay",
 		allocator,
-		settings.tables_capacity,
+		settings.gameplay_tables_capacity,
+		settings.gameplay_views_capacity,
 		32,
 		8,
-	)
-	settings.command_buffers_capacity = 8
-	if err != nil {
-		component_registry_destroy(&world.registry)
+		settings.command_buffers_capacity,
+		8,
+	) {
 		entity_store_destroy(&world.entities)
-		ode.overbase__terminate(&world.overbase)
+		ode.overbase_terminate(&world.overbase)
+
 		free(world, allocator)
+
 		return nil
 	}
-	world.tick = 0
-	world.frame_idx = 0
 
 	return world
 }
@@ -100,7 +101,7 @@ world_destroy :: proc(world: ^World) {
 	if world == nil do return 
 	// DB must be terminated before their shared Overbase.
 	// ODE_ECS explicitly req's DB to detach before terminating the overbase.
-	ode.terminate(&world.gameplay.ecs)
+	database_destroy(&world.gameplay)
 	component_registry_destroy(&world.registry)
 	entity_store_destroy(&world.entities)
 	ode.overbase_terminate(&world.overbase)
@@ -111,7 +112,6 @@ world_destroy :: proc(world: ^World) {
 world_begin_frame :: proc(world: ^World, frame_idx: u64) {
 	if world == nil do return
 	world.frame_idx = frame_idx
-	world.tick += 1
 }
 world_end_frame :: proc(world: ^World) { 
 	if world == nil do return
@@ -120,11 +120,6 @@ world_end_frame :: proc(world: ^World) {
 	// We int dont automatically pack yet. The scheduler will own that policy.
 }
 
-//* DATABASE ACCESS
-world_gameplay_db :: proc(world: ^World) -> ^ode.Database {
-	if world == nil do return nil
-	return &world.gameplay.ecs
-}
 //* ENTITY API
 world_create_entity :: proc(world: ^World) -> ^Entity {
 	if world == nil do return ENTITY_INVALID
@@ -133,6 +128,13 @@ world_create_entity :: proc(world: ^World) -> ^Entity {
 world_destroy_entity :: proc(world: ^World, entity: ^Entity) -> bool {
 	if world == nil do return false
 	return entity_destroy(&world.entities, entity)
+}
+world_entity_is_alive :: proc(
+	world: ^World,
+	entity: Entity,
+) -> bool {
+	if world == nil do return false
+	return entity_is_alive(&world.entities, entity)
 }
 world_entity_count :: proc(world: ^World) -> int {
 	if world == nil do return 0
