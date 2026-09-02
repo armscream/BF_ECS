@@ -3,8 +3,8 @@ package BF_ECS
 import "core:math"
 import "core:mem"
 
-import mth "../../Core/BF_Math"
 import "../../Core"
+import mth "../../Core/BF_Math"
 
 // Spatial_Settings is the alias through which callers reach the
 // project-wide world partition settings. Defined in Core so the
@@ -13,24 +13,9 @@ Spatial_Settings :: Core.Spatial_Settings
 
 // ============================================================================
 // Coordinates
-// 
+//
 // Coordinates are integer grid coordinates. They are intentionally separate
 // from world-space positions.
-//
-// Chunk_Coord identifies a world chunk.
-//
-// Cell_Coord identifies a cell inside the world grid.
-//
-// Local_Cell identifies a cell inside a chunk and therefore has a bounded
-// range:
-//
-//     0 <= x < chunk_size
-//     0 <= y < chunk_size
-//     0 <= z < chunk_size
-//
-// In 2D, z is simply ignored.
-//
-
 Chunk_Coord :: struct {
 	x: i32,
 	y: i32,
@@ -52,7 +37,7 @@ Local_Cell :: struct {
 
 // ===============================
 // Spatial Index
-// 
+//
 // The first implementation uses a dense cell index inside each world chunk.
 //
 // We deliberately separate the index from the Chunk itself.
@@ -81,28 +66,28 @@ Local_Cell :: struct {
 // This gives compact contiguous entity ranges for every cell.
 //
 Spatial_Index :: struct {
-	cell_count: u32,
+	cell_count:   u32,
 
 	// Number of entities currently belonging to each cell.
-	counts: []u32,
+	counts:       []u32,
 
 	// Starting offset into entities[] for each cell.
-	offsets: []u32,
+	offsets:      []u32,
 
 	// Entity IDs packed by cell.
-	entities: []Entity,
+	entities:     []Entity,
 
 	// Number of entities currently stored.
 	entity_count: u32,
 
 	// Allocator used by this index.
-	allocator: mem.Allocator,
+	allocator:    mem.Allocator,
 }
 
 
 // ===========================
 // World Chunk
-// 
+//
 // A chunk is a spatial partitioning unit.
 //
 // It does NOT contain ECS component storage.
@@ -127,26 +112,55 @@ Spatial_Index :: struct {
 // its own BVH/broad phase.
 //
 World_Chunk :: struct {
-	coord: Chunk_Coord,
+	coord:    Chunk_Coord,
+	spatial:  Spatial_Index, // Local spatial index
 
-	spatial: Spatial_Index,
-
+	// Dynamic/dormant entities occupying this chunk
+	entities: [dynamic]Entity,
+	// Static world/rendering information
+	static:   Static_Chunk_Data, // Could be render objects?
+	state:    Chunk_State, // Chunk lifecycle.
 	// Set when membership changes and the spatial index needs rebuilding.
-	dirty: bool,
-
-	// Number of entities currently associated with this chunk.
-	entity_count: u32,
+	using dirty: Chunk_Dirty_Flags,
+	using flags: Chunk_Flags,
 }
 
+Static_Chunk_Data :: struct {
+	// TODO: Add static world/rendering information
+	// Static render objects
+	//meshes: [dynamic]Render_Object,
+
+	// Terrain/world data
+	//terrain: Terrain_Data, (height data?)
+
+	// Potentially baked worl data
+	//lighting: ... (could even do wind effects, like direction and strength)
+}
+
+// Flags give a quick lookup to what data is available in a chunk.
+Chunk_Flags :: struct {
+	Has_Static:     bool,
+	Has_Dynamic:    bool,
+	Has_Dormant:    bool,
+	Has_Terrain:    bool,
+	Has_Replicated: bool,
+}
+// Marks what data needs to be updated
+Chunk_Dirty_Flags  :: struct {
+	Static:     bool,
+	Dynamic:    bool,
+	Dormant:    bool,
+	Terrain:    bool,
+	Replicated: bool,
+}
 
 // ========================
 // World Spatial Partition
 World_Spatial :: struct {
-	settings: Core.Spatial_Settings,
+	settings:  Core.Spatial_Settings,
 
 	// Only chunks containing entities are allocated.
-	chunks: map[Chunk_Coord]^World_Chunk,
-
+	chunks:    map[Chunk_Coord]^World_Chunk,
 	allocator: mem.Allocator,
 }
 
@@ -199,13 +213,10 @@ world_spatial_destroy :: proc(ws: ^World_Spatial) {
 //     position -1m          -> chunk -1
 //
 // Negative coordinates are intentionally handled through floor rather than truncation.
-world_to_chunk :: proc(
-	ws: ^World_Spatial,
-	position: mth.Vec3,
-) -> Chunk_Coord {
+world_to_chunk :: proc(ws: ^World_Spatial, position: mth.Vec3) -> Chunk_Coord {
 	chunk_world_size := f32(ws.settings.chunk_size) * ws.settings.cell_size
 
-	return Chunk_Coord{
+	return Chunk_Coord {
 		x = i32(math.floor(position.x / chunk_world_size)),
 		y = i32(math.floor(position.y / chunk_world_size)),
 		z = i32(math.floor(position.z / chunk_world_size)),
@@ -213,13 +224,10 @@ world_to_chunk :: proc(
 }
 
 // Convert world position to the global cell coordinate.
-world_to_cell :: proc(
-	ws: ^World_Spatial,
-	position: mth.Vec3,
-) -> Cell_Coord {
+world_to_cell :: proc(ws: ^World_Spatial, position: mth.Vec3) -> Cell_Coord {
 	cell := ws.settings.cell_size
 
-	return Cell_Coord{
+	return Cell_Coord {
 		x = i32(math.floor(position.x / cell)),
 		y = i32(math.floor(position.y / cell)),
 		z = i32(math.floor(position.z / cell)),
@@ -235,30 +243,24 @@ world_to_cell :: proc(
 //     0 <= z < chunk_size
 //
 // even for negative world coordinates.
-world_to_local_cell :: proc(
-	ws: ^World_Spatial,
-	position: mth.Vec3,
-) -> Local_Cell {
+world_to_local_cell :: proc(ws: ^World_Spatial, position: mth.Vec3) -> Local_Cell {
 	global := world_to_cell(ws, position)
 	chunk := world_to_chunk(ws, position)
 
 	size := i32(ws.settings.chunk_size)
 
-	return Local_Cell{
-		x = u32(global.x - chunk.x*size),
-		y = u32(global.y - chunk.y*size),
-		z = u32(global.z - chunk.z*size),
+	return Local_Cell {
+		x = u32(global.x - chunk.x * size),
+		y = u32(global.y - chunk.y * size),
+		z = u32(global.z - chunk.z * size),
 	}
 }
 
 // Convert a chunk coordinate to the world-space origin of that chunk.
-chunk_origin :: proc(
-	ws: ^World_Spatial,
-	coord: Chunk_Coord,
-) -> mth.Vec3 {
+chunk_origin :: proc(ws: ^World_Spatial, coord: Chunk_Coord) -> mth.Vec3 {
 	chunk_world_size := f32(ws.settings.chunk_size) * ws.settings.cell_size
 
-	return mth.Vec3{
+	return mth.Vec3 {
 		f32(coord.x) * chunk_world_size,
 		f32(coord.y) * chunk_world_size,
 		f32(coord.z) * chunk_world_size,
@@ -274,22 +276,17 @@ chunk_origin :: proc(
 // 3D: index = x + y*S + z*S*S
 // 2D: index = x + y*S
 // where S = chunk_size.
-local_cell_index :: proc(
-    ws: ^World_Spatial,
-    cell: Local_Cell,
-) -> u32 {
-    s := u32(ws.settings.chunk_size)
+local_cell_index :: proc(ws: ^World_Spatial, cell: Local_Cell) -> u32 {
+	s := u32(ws.settings.chunk_size)
 
-    // settings.cubic is the dimensional flag exposed by
-    // Core.Spatial_Settings (true = 3D, false = 2D). We test on it
-    // directly so the file does not depend on a local enum.
-    if ws.settings.cubic do return u32(cell.x) + u32(cell.y) * s + u32(cell.z) * s * s
-    return u32(cell.x) + u32(cell.y) * s
+	// settings.cubic is the dimensional flag exposed by
+	// Core.Spatial_Settings (true = 3D, false = 2D). We test on it
+	// directly so the file does not depend on a local enum.
+	if ws.settings.cubic do return u32(cell.x) + u32(cell.y) * s + u32(cell.z) * s * s
+	return u32(cell.x) + u32(cell.y) * s
 }
 
-cells_per_chunk :: proc(
-	ws: ^World_Spatial,
-) -> u32 {
+cells_per_chunk :: proc(ws: ^World_Spatial) -> u32 {
 	s := ws.settings.chunk_size
 
 	if ws.settings.cubic do return s * s * s
@@ -331,10 +328,7 @@ spatial_index_destroy :: proc(index: ^Spatial_Index) {
 	index^ = {}
 }
 
-world_spatial_create_chunk :: proc(
-	ws: ^World_Spatial,
-	coord: Chunk_Coord,
-) -> ^World_Chunk {
+world_spatial_create_chunk :: proc(ws: ^World_Spatial, coord: Chunk_Coord) -> ^World_Chunk {
 	if chunk, ok := ws.chunks[coord]; ok do return chunk
 
 	chunk := new(World_Chunk, ws.allocator)
@@ -345,11 +339,7 @@ world_spatial_create_chunk :: proc(
 
 	cell_count := cells_per_chunk(ws)
 
-	if !spatial_index_init(
-		&chunk.spatial,
-		cell_count,
-		ws.allocator,
-	) {
+	if !spatial_index_init(&chunk.spatial, cell_count, ws.allocator) {
 		free(chunk, ws.allocator)
 		return nil
 	}
@@ -358,31 +348,23 @@ world_spatial_create_chunk :: proc(
 	return chunk
 }
 
-world_spatial_find_chunk :: proc(
-	ws: ^World_Spatial,
-	coord: Chunk_Coord,
-) -> (^World_Chunk, bool) {
+world_spatial_find_chunk :: proc(ws: ^World_Spatial, coord: Chunk_Coord) -> (^World_Chunk, bool) {
 	if chunk, ok := ws.chunks[coord]; ok do return chunk, true
 
 	return nil, false
 }
 
-world_spatial_remove_chunk :: proc(
-	ws: ^World_Spatial,
-	coord: Chunk_Coord,
-) {
+world_spatial_remove_chunk :: proc(ws: ^World_Spatial, coord: Chunk_Coord) {
 	chunk, ok := ws.chunks[coord]
 
 	if !ok do return
 
-    spatial_index_destroy(&chunk.spatial)
+	spatial_index_destroy(&chunk.spatial)
 
-		free(chunk, ws.allocator)
-		delete_key(&ws.chunks, coord)
+	free(chunk, ws.allocator)
+	delete_key(&ws.chunks, coord)
 }
 
-chunk_is_empty :: proc(
-	chunk: ^World_Chunk,
-) -> bool {
+chunk_is_empty :: proc(chunk: ^World_Chunk) -> bool {
 	return chunk.entity_count == 0
 }
