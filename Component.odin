@@ -1,7 +1,6 @@
 // Engine/src/Modules/BF_ECS/Component.odin
 package BF_ECS
 
-import "base:runtime"
 import ode "/ode_ecs/src"
 
 //* COMPONENT ID

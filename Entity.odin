@@ -4,16 +4,17 @@ package BF_ECS
 import ode "/ode_ecs/src"
 
 //* Entity
-// BF_ECS entities are ODE_ECS entities. 
+// BF_ECS entities are ODE_ECS entities.
 Entity :: ode.entity_id
-
 // ODE_ECS uses DELETED_INDEX for invalid/expired IDs.
-ENTITY_INVALID := Entity{ix = ode.DELETED_INDEX}
+ENTITY_INVALID := Entity {
+	ix = ode.DELETED_INDEX,
+}
 
 //* ENTITY STORE
 // ODE Overbase holds entity lifetime, while several ode databases can share the same entity namespace.
 Entity_Store :: struct {
-	overbase: ^ode.Overbase
+	overbase: ^ode.Overbase,
 }
 
 //* INITIALIZATION
@@ -22,7 +23,7 @@ entity_store_init :: proc(store: ^Entity_Store, overbase: ^ode.Overbase) {
 	assert(overbase != nil)
 	store.overbase = overbase
 }
-entity_store_destroy :: proc(store: ^Entity_Store){
+entity_store_destroy :: proc(store: ^Entity_Store) {
 	if store == nil do return
 	store^ = {}
 }

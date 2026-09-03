@@ -65,13 +65,13 @@ command_buffer_clear :: proc(buffer: ^Command_Buffer) {
 	ode.clear(&buffer.ecs)
 }
 
-//* Entity Creation 
+//* Entity Creation
 //TODO: Move this to entity_create(world) as this doesnt actually need the cmd buffer
-// Entity creation is intentionally immediate.  
+// Entity creation is intentionally immediate.
 // ODE_ECS explicitly does this because allocating an Entity ID does not
 // mutate tables/views and is therefore safe during iteration.
 // Components should then be added through the command buffer.
-@(deprecated="will be moved to entity_create(world) as entity creation is immediate")
+@(deprecated = "will be moved to entity_create(world) as entity creation is immediate")
 command_buffer_create_entity :: proc(buffer: ^Command_Buffer) -> Entity {
 	if buffer == nil || !buffer.initialized do return ENTITY_INVALID
 	entity, err := ode.create_entity(buffer.database.ecs.overbase)

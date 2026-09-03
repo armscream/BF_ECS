@@ -9,9 +9,9 @@ World_Settings :: struct {
 	// maximum # of simultaneously alive entities.
 	entities_capacity:        u32,
 	// # of component tables expected in the main gameplay DB.
-	gameplay_tables_capacity:          int,
+	gameplay_tables_capacity: int,
 	// # of preallocated views.
-	gameplay_views_capacity:           int,
+	gameplay_views_capacity:  int,
 	// # of cmd buffers
 	command_buffers_capacity: int,
 }
@@ -19,8 +19,8 @@ World_Settings :: struct {
 // This is intentionally a capacity rather than a hard req't on the # of entities that will exist.
 WORLD_DEFAULT_SETTINGS :: World_Settings {
 	entities_capacity        = 65_536,
-	gameplay_tables_capacity          = 128,
-	gameplay_views_capacity           = 64,
+	gameplay_tables_capacity = 128,
+	gameplay_views_capacity  = 64,
 	command_buffers_capacity = 4,
 }
 
@@ -33,21 +33,21 @@ World_Database :: struct {
 }
 //* WORLD
 World :: struct {
-	allocator: runtime.Allocator,
-	settings:  World_Settings,
+	allocator:       runtime.Allocator,
+	settings:        World_Settings,
 	// Shared entity namespace
 	// Every DB attached to this Overbase sees the same Entity IDs.
 	// This is the foundation for cross-DB entity references btw: GameplayDB, SpatialDB, NetworkDB, EditorDB
 	// All refer to the same entity IDs
-	overbase:  ode.Overbase,
-	entities:  Entity_Store,
-	gameplay:  Database, // main gameplay DB
-	registry:  Component_Registry, // Component schema
-	views: [dynamic]^View, // Persistent queries.
+	overbase:        ode.Overbase,
+	entities:        Entity_Store,
+	gameplay:        Database, // main gameplay DB
+	registry:        Component_Registry, // Component schema
+	views:           [dynamic]^View, // Persistent queries.
 	command_buffers: [dynamic]^Command_Buffer, // Persistent cmd buffers.
 	// frame state
-	tick:      u64,
-	frame_idx: u64,
+	tick:            u64,
+	frame_idx:       u64,
 }
 //* INITIALIZATION
 world_create :: proc(
@@ -89,9 +89,7 @@ world_create :: proc(
 	) {
 		entity_store_destroy(&world.entities)
 		ode.overbase_terminate(&world.overbase)
-
 		free(world, allocator)
-
 		return nil
 	}
 
@@ -100,7 +98,7 @@ world_create :: proc(
 
 //* DESTRUCTION
 world_destroy :: proc(world: ^World) {
-	if world == nil do return 
+	if world == nil do return
 	// destroy persistent ECS objects
 	for buffer in world.command_buffers {
 		command_buffer_destroy(buffer)
@@ -126,7 +124,7 @@ world_begin_frame :: proc(world: ^World, frame_idx: u64) {
 	if world == nil do return
 	world.frame_idx = frame_idx
 }
-world_end_frame :: proc(world: ^World) { 
+world_end_frame :: proc(world: ^World) {
 	if world == nil do return
 	// Structural mutations should normally be performed through ODE_ECS, cmd buffers and replayed at the appropriate sync point.
 	// packing can then happen here, or throguh the scheduler's ECS stage.
@@ -135,17 +133,14 @@ world_end_frame :: proc(world: ^World) {
 
 //* ENTITY API
 world_create_entity :: proc(world: ^World) -> Entity {
-    if world == nil do return ENTITY_INVALID
-    return entity_create(&world.entities)
-}   
+	if world == nil do return ENTITY_INVALID
+	return entity_create(&world.entities)
+}
 world_destroy_entity :: proc(world: ^World, entity: ^Entity) -> bool {
 	if world == nil do return false
 	return entity_destroy(&world.entities, entity^)
 }
-world_entity_is_alive :: proc(
-	world: ^World,
-	entity: Entity,
-) -> bool {
+world_entity_is_alive :: proc(world: ^World, entity: Entity) -> bool {
 	if world == nil do return false
 	return entity_is_alive(&world.entities, entity)
 }
@@ -154,17 +149,30 @@ world_entity_count :: proc(world: ^World) -> int {
 	return entity_count(&world.entities)
 }
 
-//* COMPONENT REGISTRATION 
-world_register_component :: proc($T: typeid, world: ^World, name: string, table: ^ode.Table(T), flags: Component_Flags = {.Runtime}) -> Component_ID {
-	assert(world != nil) 
+//* COMPONENT REGISTRATION
+world_register_component :: proc(
+	$T: typeid,
+	world: ^World,
+	name: string,
+	table: ^ode.Table(T),
+	flags: Component_Flags = {.Runtime},
+) -> Component_ID {
+	assert(world != nil)
 	return component_register(T, &world.registry, name, table, flags)
 }
 
 //* View Creation
-world_view_create :: proc(world: ^World, name: string, includes: []^ode.Shared_Table, excludes: []^ode.Shared_Table = nil, any_of: []^ode.Shared_Table = nil, filter: proc(row: ^ode.View_Row, user_data: rawptr)-> bool = nil) -> ^View {
+world_view_create :: proc(
+	world: ^World,
+	name: string,
+	includes: []^ode.Shared_Table,
+	excludes: []^ode.Shared_Table = nil,
+	any_of: []^ode.Shared_Table = nil,
+	filter: proc(row: ^ode.View_Row, user_data: rawptr) -> bool = nil,
+) -> ^View {
 	if world == nil do return nil
 	view := new(View, world.allocator)
-	if !view_init(view, &world.gameplay, name, includes, excludes, any_of, filter){
+	if !view_init(view, &world.gameplay, name, includes, excludes, any_of, filter) {
 		free(view, world.allocator)
 		return nil
 	}
@@ -172,7 +180,7 @@ world_view_create :: proc(world: ^World, name: string, includes: []^ode.Shared_T
 	return view
 }
 //* View destruction
-world_view_destroy :: proc(world: ^World, view: ^View){ 
+world_view_destroy :: proc(world: ^World, view: ^View) {
 	if world == nil || view == nil do return
 	for i := 0; i < len(world.views); i += 1 {
 		if world.views[i] == view {
@@ -185,10 +193,15 @@ world_view_destroy :: proc(world: ^World, view: ^View){
 }
 
 //* Command Buffer Creation
-world_command_buffer_create :: proc(world: ^World, name: string, commands_capacity: int = 4096, payload_capacity: int = 256 * 1024) -> ^Command_Buffer{ 
+world_command_buffer_create :: proc(
+	world: ^World,
+	name: string,
+	commands_capacity: int = 4096,
+	payload_capacity: int = 256 * 1024,
+) -> ^Command_Buffer {
 	if world == nil do return nil
 	buffer := new(Command_Buffer, world.allocator)
-	if !command_buffer_init(buffer, &world.gameplay, name, commands_capacity, payload_capacity){
+	if !command_buffer_init(buffer, &world.gameplay, name, commands_capacity, payload_capacity) {
 		free(buffer, world.allocator)
 		return nil
 	}
@@ -196,7 +209,7 @@ world_command_buffer_create :: proc(world: ^World, name: string, commands_capaci
 	return buffer
 }
 //* Command Buffer Destruction
-world_command_buffer_destroy :: proc(world: ^World, buffer: ^Command_Buffer){ 
+world_command_buffer_destroy :: proc(world: ^World, buffer: ^Command_Buffer) {
 	if world == nil || buffer == nil do return
 	for i := 0; i < len(world.command_buffers); i += 1 {
 		if world.command_buffers[i] == buffer {
