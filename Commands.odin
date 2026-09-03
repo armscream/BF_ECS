@@ -74,7 +74,9 @@ command_buffer_clear :: proc(buffer: ^Command_Buffer) {
 @(deprecated="will be moved to entity_create(world) as entity creation is immediate")
 command_buffer_create_entity :: proc(buffer: ^Command_Buffer) -> Entity {
 	if buffer == nil || !buffer.initialized do return ENTITY_INVALID
-	return ode.create_entity(buffer.database.ecs.overbase)
+	entity, err := ode.create_entity(buffer.database.ecs.overbase)
+	if err != nil do return ENTITY_INVALID
+	return entity
 }
 
 //* Destroy Entity
@@ -154,6 +156,6 @@ command_buffer_remove_parent :: proc(buffer: ^Command_Buffer, child: Entity) -> 
 // All structural operations recorded into this buffer become visible here.
 command_buffer_replay :: proc(buffer: ^Command_Buffer) -> (skipped: int, success: bool) {
 	if buffer == nil || !buffer.initialized do return 0, false
-	skipped, err := ode.replay(&buffer.ecs)
-	return skipped, err == nil
+	count, err := ode.replay(&buffer.ecs)
+	return count, err == nil
 }

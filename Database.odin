@@ -3,7 +3,7 @@ package BF_ECS
 import ode "/ode_ecs/src"
 
 //* DATABASE KIND
-Database_Kind = enum u8 {
+Database_Kind :: enum u8 {
     Gameplay,
     Spatial,
     Network,
@@ -22,8 +22,8 @@ Database :: struct {
 }
 //* INITIALIZATION
 database_init :: proc(db: ^Database, overbase: ^ode.Overbase, kind: Database_Kind, name: string, allocator := context.allocator, entities_tables_cap: int = 128, views_cap : int = 64, tiny_tables_cap: int = 32, pair_tables_cap: int = 8, command_buffers_cap: int = 32, observers_cap: int = 8) -> bool {
-    assert(db != nill)
-    assert(overbase != nill)
+    assert(db != nil)
+    assert(overbase != nil)
     if db.initialized do return false
 
     err := ode.init_from_overbase(&db.ecs, overbase, allocator, entities_tables_cap, views_cap, tiny_tables_cap, pair_tables_cap, command_buffers_cap, observers_cap)

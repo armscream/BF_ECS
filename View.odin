@@ -21,7 +21,7 @@ view_init :: proc(view: ^View, database: ^Database, name: string, includes: []^o
     assert(database.initialized)
     if view.initialized do return false
     if includes == nil || len(includes) == 0 do return false
-    err := ode.view__init(&view.ecs, &database.ecs, includes, any_of, filter)
+    err := ode.view__init(&view.ecs, &database.ecs, includes, excludes, any_of, filter)
     if err != nil do return false
     view.name = name
     view.database = database

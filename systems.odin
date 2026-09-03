@@ -42,10 +42,10 @@ ecs_system_world_tick :: proc(ctx: rawptr) {
 
 	world := cast(^World)frame.world.ptr
 	world.tick += 1
-	world.frame_index = frame.frame_index
+	world.frame_idx = frame.frame_index
 
 	when BF_ECS_LOG_TICK {
-		log.infof("[ECS] tick=%d frame=%d dt=%.4f", world.tick, world.frame_index, frame.dt)
+		log.infof("[ECS] tick=%d frame=%d dt=%.4f", world.tick, world.frame_idx, frame.dt)
 	}
 }
 

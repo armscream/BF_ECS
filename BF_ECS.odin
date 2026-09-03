@@ -68,10 +68,7 @@ when #config(BUILDING_BF_ECS_DLL, false) {
 	}
 }
 
-// ============================================================================
-// MODULE STATE
-// ============================================================================
-
+//* MODULE STATE
 // Singleton ECS state. Lives for the lifetime of the BF_ECS module;
 // systems read the World pointer from here. Exposed through a service
 // of the same name so application code can reach it without going
@@ -79,18 +76,14 @@ when #config(BUILDING_BF_ECS_DLL, false) {
 MODULE_STATE :: struct {
 	world: ^World,
 }
-@(private)
-MODULE_STATE_VALUE.world = world_create(context.allocator)
+MODULE_STATE_VALUE := MODULE_STATE{}
 
 // Convenience: systems read this; module loaders also clear/nil it.
 module_world :: proc() -> ^World {
 	return MODULE_STATE_VALUE.world
 }
 
-// ============================================================================
-// LIFECYCLE
-// ============================================================================
-
+//* LIFECYCLE
 module_load :: proc(ctx: ^Core.Lib_Context) -> bool {
 	_ = ctx
 	log.info("[BF_ECS] loaded")
@@ -99,7 +92,7 @@ module_load :: proc(ctx: ^Core.Lib_Context) -> bool {
 
 module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
 	// *Allocate the World.
-	MODULE_STATE_VALUE.world = world_create(context.allocator)
+	MODULE_STATE_VALUE.world = world_create(allocator = context.allocator)
 	if MODULE_STATE_VALUE.world == nil {
 		log.error("[BF_ECS] failed to allocate World")
 		return false
@@ -126,7 +119,7 @@ module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
 	// which the engine maps to default `.Update` Stage info.
 
 	tick_reg := Core.System_Registration {
-		name = BF_ECS_SYSTEM_NAME_TICK,
+		name = ECS_SYSTEM_NAME_TICK,
 		execute = ecs_system_world_tick,
 		info = Core.System_Info{stage = .Update},
 	}
@@ -186,10 +179,7 @@ module_unload :: proc(ctx: ^Core.Lib_Context) {
 	log.info("[BF_ECS] unloaded")
 }
 
-// ============================================================================
 //* SERVICE
-// ============================================================================
-
 // Service name used by application code and the engine to find the
 // BF_ECS World pointer. Kept stable; renaming it is an API break.
 ECS_WORLD_SERVICE_NAME :: "BF_ECS.World"

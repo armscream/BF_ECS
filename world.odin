@@ -3,7 +3,6 @@ package BF_ECS
 
 import ode "/ode_ecs/src"
 import "base:runtime"
-import DAG "../BF_DAG"
 
 //* WORLD SETTINGS
 World_Settings :: struct {
@@ -22,7 +21,7 @@ WORLD_DEFAULT_SETTINGS :: World_Settings {
 	entities_capacity        = 65_536,
 	gameplay_tables_capacity          = 128,
 	gameplay_views_capacity           = 64,
-	command_buffers_capacity = DAG.CPU_Info.logical_cores,
+	command_buffers_capacity = 4,
 }
 
 //* WORLD DATABASE
@@ -45,7 +44,7 @@ World :: struct {
 	gameplay:  Database, // main gameplay DB
 	registry:  Component_Registry, // Component schema
 	views: [dynamic]^View, // Persistent queries.
-	command_buffers: [WORLD_DEFAULT_SETTINGS.command_buffers_capacity]^Command_Buffer, // Persistent cmd buffers.
+	command_buffers: [dynamic]^Command_Buffer, // Persistent cmd buffers.
 	// frame state
 	tick:      u64,
 	frame_idx: u64,
@@ -72,7 +71,7 @@ world_create :: proc(
 	// Entity store
 	entity_store_init(&world.entities, &world.overbase)
 	// component registry
-	component_registry_init(&world.components, allocator, settings.gameplay_tables_capacity)
+	component_registry_init(&world.registry, allocator, settings.gameplay_tables_capacity)
 	// Gameplay DB
 	// This DB shares the overbase rather than creating it's own entity namespace.
 	if !database_init(
@@ -107,12 +106,12 @@ world_destroy :: proc(world: ^World) {
 		command_buffer_destroy(buffer)
 		free(buffer, world.allocator)
 	}
-	delete(world.command_buffers, world.allocator)
+	delete(world.command_buffers)
 	for view in world.views {
 		view_destroy(view)
 		free(view, world.allocator)
 	}
-	delete(world.views, world.allocator)
+	delete(world.views)
 	// DB must be terminated before their shared Overbase.
 	// ODE_ECS explicitly req's DB to detach before terminating the overbase.
 	database_destroy(&world.gameplay)
@@ -135,13 +134,13 @@ world_end_frame :: proc(world: ^World) {
 }
 
 //* ENTITY API
-world_create_entity :: proc(world: ^World) -> ^Entity {
-	if world == nil do return ENTITY_INVALID
-	return entity_create(&world.entities)
-}
+world_create_entity :: proc(world: ^World) -> Entity {
+    if world == nil do return ENTITY_INVALID
+    return entity_create(&world.entities)
+}   
 world_destroy_entity :: proc(world: ^World, entity: ^Entity) -> bool {
 	if world == nil do return false
-	return entity_destroy(&world.entities, entity)
+	return entity_destroy(&world.entities, entity^)
 }
 world_entity_is_alive :: proc(
 	world: ^World,

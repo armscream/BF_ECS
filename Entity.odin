@@ -8,9 +8,7 @@ import ode "/ode_ecs/src"
 Entity :: ode.entity_id
 
 // ODE_ECS uses DELETED_INDEX for invalid/expired IDs.
-ENTITY_INVALID :: Entity {
-	ix = ode.DELETED_INDEX
-}
+ENTITY_INVALID := Entity{ix = ode.DELETED_INDEX}
 
 //* ENTITY STORE
 // ODE Overbase holds entity lifetime, while several ode databases can share the same entity namespace.
@@ -56,5 +54,5 @@ entity_is_alive :: proc(store: ^Entity_Store, entity: Entity) -> bool {
 //* UTILITY
 entity_count :: proc(store: ^Entity_Store) -> int {
 	if store == nil || store.overbase == nil do return 0
-	return ode.entities_len(store_overbase)
+	return ode.entities_len(store.overbase)
 }

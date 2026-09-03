@@ -1,7 +1,7 @@
 package BF_ECS
 
 import "base:runtime"
-import "/ode_ecs/src"
+import ode "/ode_ecs/src"
 
 //* COMPONENT REGISTRY
 Component_Registry :: struct {
@@ -14,7 +14,7 @@ Component_Registry :: struct {
 
 //* INITIALIZATION
 component_registry_init :: proc(registry: ^Component_Registry, allocator:= context.allocator, capacity: int = 64) {
-    assert(registry != nill)
+    assert(registry != nil)
     registry.allocator = allocator
     registry.next_id = Component_ID(1)
     registry.components = make([dynamic]Component_Descriptor, 0, capacity, allocator)
@@ -22,11 +22,11 @@ component_registry_init :: proc(registry: ^Component_Registry, allocator:= conte
     registry.by_type = make(map[typeid]Component_ID, allocator)
 }
 //* DESTRUCTION
-component_registry_destroy(registry: ^Component_Registry) {
+component_registry_destroy :: proc(registry: ^Component_Registry) {
     if registry == nil do return
-    delete(registry.components, registry.allocator)
-    delete(registry.by_name, registry.allocator)
-    delete(registry.by_type, registry.allocator)
+    delete(registry.components)
+    delete(registry.by_name)
+    delete(registry.by_type)
     registry^ = {}
 }
 //* REGISTER Table(T)
@@ -56,7 +56,7 @@ component_register_table :: proc($T: typeid, registry: ^Component_Registry, name
 //* LOOKUP
 component_find :: proc(registry: ^Component_Registry, id: Component_ID) -> ^Component_Descriptor {
     if registry == nil || id == COMPONENT_INVALID do return nil
-    index := int(id = Component_ID(1))
+    index := int(id)
     if index < 0 || index >= len(registry.components) do return nil
     return &registry.components[index]
 }
@@ -74,7 +74,7 @@ component_find_by_type :: proc($T: typeid, registry: ^Component_Registry) -> ^Co
 }
 
 //* COMPONENT ID
-component_id :: proc($T: typeid, registry: ^Component_Registry) -> Component_Id {
+component_id :: proc($T: typeid, registry: ^Component_Registry) -> Component_ID {
     if registry == nil do return COMPONENT_INVALID
     id, ok := registry.by_type[typeid_of(T)]
     if !ok do return COMPONENT_INVALID
