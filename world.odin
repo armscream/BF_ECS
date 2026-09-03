@@ -3,6 +3,7 @@ package BF_ECS
 
 import ode "/ode_ecs/src"
 import "base:runtime"
+import DAG "../BF_DAG"
 
 //* WORLD SETTINGS
 World_Settings :: struct {
@@ -21,7 +22,7 @@ WORLD_DEFAULT_SETTINGS :: World_Settings {
 	entities_capacity        = 65_536,
 	gameplay_tables_capacity          = 128,
 	gameplay_views_capacity           = 64,
-	command_buffers_capacity = 32,
+	command_buffers_capacity = DAG.CPU_Info.logical_cores,
 }
 
 //* WORLD DATABASE
@@ -43,6 +44,8 @@ World :: struct {
 	entities:  Entity_Store,
 	gameplay:  Database, // main gameplay DB
 	registry:  Component_Registry, // Component schema
+	views: [dynamic]^View, // Persistent queries.
+	command_buffers: [WORLD_DEFAULT_SETTINGS.command_buffers_capacity]^Command_Buffer, // Persistent cmd buffers.
 	// frame state
 	tick:      u64,
 	frame_idx: u64,
@@ -99,6 +102,17 @@ world_create :: proc(
 //* DESTRUCTION
 world_destroy :: proc(world: ^World) {
 	if world == nil do return 
+	// destroy persistent ECS objects
+	for buffer in world.command_buffers {
+		command_buffer_destroy(buffer)
+		free(buffer, world.allocator)
+	}
+	delete(world.command_buffers, world.allocator)
+	for view in world.views {
+		view_destroy(view)
+		free(view, world.allocator)
+	}
+	delete(world.views, world.allocator)
 	// DB must be terminated before their shared Overbase.
 	// ODE_ECS explicitly req's DB to detach before terminating the overbase.
 	database_destroy(&world.gameplay)
@@ -145,4 +159,52 @@ world_entity_count :: proc(world: ^World) -> int {
 world_register_component :: proc($T: typeid, world: ^World, name: string, table: ^ode.Table(T), flags: Component_Flags = {.Runtime}) -> Component_ID {
 	assert(world != nil) 
 	return component_register(T, &world.registry, name, table, flags)
+}
+
+//* View Creation
+world_view_create :: proc(world: ^World, name: string, includes: []^ode.Shared_Table, excludes: []^ode.Shared_Table = nil, any_of: []^ode.Shared_Table = nil, filter: proc(row: ^ode.View_Row, user_data: rawptr)-> bool = nil) -> ^View {
+	if world == nil do return nil
+	view := new(View, world.allocator)
+	if !view_init(view, &world.gameplay, name, includes, excludes, any_of, filter){
+		free(view, world.allocator)
+		return nil
+	}
+	append(&world.views, view)
+	return view
+}
+//* View destruction
+world_view_destroy :: proc(world: ^World, view: ^View){ 
+	if world == nil || view == nil do return
+	for i := 0; i < len(world.views); i += 1 {
+		if world.views[i] == view {
+			view_destroy(view)
+			free(view, world.allocator)
+			unordered_remove(&world.views, i)
+			return
+		}
+	}
+}
+
+//* Command Buffer Creation
+world_command_buffer_create :: proc(world: ^World, name: string, commands_capacity: int = 4096, payload_capacity: int = 256 * 1024) -> ^Command_Buffer{ 
+	if world == nil do return nil
+	buffer := new(Command_Buffer, world.allocator)
+	if !command_buffer_init(buffer, &world.gameplay, name, commands_capacity, payload_capacity){
+		free(buffer, world.allocator)
+		return nil
+	}
+	append(&world.command_buffers, buffer)
+	return buffer
+}
+//* Command Buffer Destruction
+world_command_buffer_destroy :: proc(world: ^World, buffer: ^Command_Buffer){ 
+	if world == nil || buffer == nil do return
+	for i := 0; i < len(world.command_buffers); i += 1 {
+		if world.command_buffers[i] == buffer {
+			command_buffer_destroy(buffer)
+			free(buffer, world.allocator)
+			unordered_remove(&world.command_buffers, i)
+			return
+		}
+	}
 }
