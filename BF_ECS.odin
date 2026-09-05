@@ -14,7 +14,6 @@
 // The two systems registered here are defined in systems.odin:
 //
 //   ECS.WorldTick       — increments World.tick + World.frame_index.
-//   ECS.PartitionStale  — no-op placeholder for the world-partition
 //                         update stage (plan §47).
 //
 // Both run on the standard system callback ABI (`proc(ctx: rawptr)`),
@@ -117,31 +116,11 @@ module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
 	// dependencies from System_Info masks/stage; for the minimum
 	// cut both systems sit at stage = .Update with empty masks,
 	// which the engine maps to default `.Update` Stage info.
-
-	tick_reg := Core.System_Registration {
-		name = ECS_SYSTEM_NAME_TICK,
-		execute = ecs_system_world_tick,
-		info = Core.System_Info{stage = .Update},
-	}
-	if !api.add_system(ctx, tick_reg) {
-		log.error("[BF_ECS] failed to register %s", ECS_SYSTEM_NAME_TICK)
+	if !ecs_register_builtin_systems(api, ctx){
+		log.error("[BF_ECS] Failed to register builtin ECS systems.")
 		world_destroy(MODULE_STATE_VALUE.world)
-		MODULE_STATE_VALUE.world = nil
 		return false
 	}
-
-	part_reg := Core.System_Registration {
-		name = ECS_SYSTEM_NAME_PART,
-		execute = ecs_system_partition_stale,
-		info = Core.System_Info{stage = .Update},
-	}
-	if !api.add_system(ctx, part_reg) {
-		log.error("[ECS] failed to register %s", ECS_SYSTEM_NAME_PART)
-		world_destroy(MODULE_STATE_VALUE.world)
-		MODULE_STATE_VALUE.world = nil
-		return false
-	}
-
 	// *Register a service so application code can reach the World.
 	// The Core service registry will call ecs_world_destroy when the
 	// module unloads — that frees the World as part of normal teardown.

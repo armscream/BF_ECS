@@ -16,9 +16,8 @@ World_Settings :: struct {
 	command_buffers_capacity: int,
 }
 // Sensible first default.
-// This is intentionally a capacity rather than a hard req't on the # of entities that will exist.
 WORLD_DEFAULT_SETTINGS :: World_Settings {
-	entities_capacity        = 65_536,
+	entities_capacity        = 65_536, // This is intentionally a max capacity.
 	gameplay_tables_capacity = 128,
 	gameplay_views_capacity  = 64,
 	command_buffers_capacity = 4,
@@ -44,7 +43,7 @@ World :: struct {
 	gameplay:        Database, // main gameplay DB
 	registry:        Component_Registry, // Component schema
 	views:           [dynamic]^View, // Persistent queries.
-	command_buffers: [dynamic]^Command_Buffer, // Persistent cmd buffers.
+	command_buffers: []Command_Buffer, // Persistent cmd buffers.
 	// frame state
 	tick:            u64,
 	frame_idx:       u64,
@@ -205,7 +204,7 @@ world_command_buffer_create :: proc(
 		free(buffer, world.allocator)
 		return nil
 	}
-	append(&world.command_buffers, buffer)
+	len(world.command_buffers) == scheduler_worker_count
 	return buffer
 }
 //* Command Buffer Destruction
