@@ -18,13 +18,11 @@
 package BF_ECS
 
 import "../../Core"
-import "core:log"
 import ode "/ode_ecs/src"
+import "core:log"
 
 //* SYSTEM CONTEXT
-ecs_system_world :: #force_inline proc(
-	ctx: ^Core.Scheduler_System_Context,
-) -> ^World {
+ecs_system_world :: #force_inline proc(ctx: ^Core.Scheduler_System_Context) -> ^World {
 	if ctx == nil || ctx.frame == nil do return nil
 	return cast(^World)ctx.frame.world.ptr
 }
@@ -36,23 +34,17 @@ ecs_system_frame :: #force_inline proc(
 	return ctx.frame
 }
 
-ecs_system_dt :: #force_inline proc(
-	ctx: ^Core.Scheduler_System_Context,
-) -> f32 {
+ecs_system_dt :: #force_inline proc(ctx: ^Core.Scheduler_System_Context) -> f32 {
 	if ctx == nil || ctx.frame == nil do return 0
 	return ctx.frame.dt
 }
 
-ecs_system_frame_index :: #force_inline proc(
-	ctx: ^Core.Scheduler_System_Context,
-) -> u64 {
+ecs_system_frame_index :: #force_inline proc(ctx: ^Core.Scheduler_System_Context) -> u64 {
 	if ctx == nil || ctx.frame == nil do return 0
 	return ctx.frame.frame_index
 }
 
-ecs_system_worker_id :: #force_inline proc(
-	ctx: ^Core.Scheduler_System_Context,
-) -> int {
+ecs_system_worker_id :: #force_inline proc(ctx: ^Core.Scheduler_System_Context) -> int {
 	if ctx == nil do return -1
 	return ctx.worker_id
 }
@@ -68,13 +60,13 @@ ecs_system_command_buffer :: #force_inline proc(
 
 //* SYSTEM REGISTRATION HELPERS
 ECS_System_Description :: struct {
-	name: string,
-	execute: ECS_System_Proc,
-	read_mask: Core.Access_Mask,
+	name:       string,
+	execute:    ECS_System_Proc,
+	read_mask:  Core.Access_Mask,
 	write_mask: Core.Access_Mask,
-	stage: Core.System_Stage,
+	stage:      Core.System_Stage,
 }
-ECS_System_Proc :: proc(rawptr)
+ECS_System_Proc :: proc(_: rawptr)
 
 ecs_register_system :: proc(
 	api: ^Core.Component_Registration_API,
@@ -84,10 +76,10 @@ ecs_register_system :: proc(
 	if api == nil || ctx == nil do return false
 	return api.add_system(
 		ctx,
-		Core.System_Registration{
+		Core.System_Registration {
 			name = description.name,
 			execute = description.execute,
-			info = Core.System_Info{
+			info = Core.System_Info {
 				read_mask = description.read_mask,
 				write_mask = description.write_mask,
 				stage = description.stage,
@@ -97,16 +89,40 @@ ecs_register_system :: proc(
 }
 
 //* ACCESS MASK HELPERS
-ecs_access_none :: #force_inline proc() -> Core.Access_Mask {
+access_none :: #force_inline proc() -> Core.Access_Mask {
 	return Core.access_mask_empty()
 }
-ecs_access_mask_from_bits :: #force_inline proc(bits: u64) -> Core.Access_Mask {
-	return Core.access_mask_from_bits(bits)
+ecs_access_mask :: #force_inline proc(component: Component_ID) -> Core.Access_Mask {
+	id := u32(component)
+	assert(id != 0, "Invalid component ID")
+
+	// Component IDs are 1-based.
+	// Access-mask bits are 0-based.
+	return Core.access_mask_from_bit(id - 1)
+}
+
+ecs_access_mask_from_components :: proc(components: []Component_ID) -> Core.Access_Mask {
+	mask := Core.access_mask_empty()
+
+	for component in components {
+		component_mask := ecs_access_mask(component)
+		Core.access_mask_or(&mask, component_mask)
+	}
+
+	return mask
+}
+
+ecs_system_read_access :: proc(components: []Component_ID) -> Core.Access_Mask {
+	return ecs_access_mask_from_components(components)
+}
+
+ecs_system_write_access :: proc(components: []Component_ID) -> Core.Access_Mask {
+	return ecs_access_mask_from_components(components)
 }
 
 //* BUILT IN SYSTEMS
 ECS_SYSTEM_NAME_TICK :: "ECS.WorldTick"
-ecs_system_world_tick :: proc(rawptr_ctx: rawptr){
+ecs_system_world_tick :: proc(rawptr_ctx: rawptr) {
 	if rawptr_ctx == nil do return
 
 	ctx := cast(^Core.Scheduler_System_Context)rawptr_ctx
@@ -137,15 +153,11 @@ ecs_system_world_tick :: proc(rawptr_ctx: rawptr){
 //
 // Until BF_DAG has an explicit synchronization/barrier node, replay belongs
 // to the engine's frame synchronization point, not the ordinary system DAG.
-ecs_replay_command_buffers :: proc(
-	world: ^World,
-) {
+ecs_replay_command_buffers :: proc(world: ^World) {
 	if world == nil do return
 
-	for i in 0..<len(world.command_buffers) {
-		ode.command_buffer__replay(
-			&world.command_buffers[i],
-		)
+	for i in 0 ..< len(world.command_buffers) {
+		ode.command_buffer__replay(&world.command_buffers[i])
 	}
 }
 
@@ -156,7 +168,7 @@ ecs_register_builtin_systems :: proc(
 ) -> bool {
 	if api == nil || ctx == nil do return false
 
-	tick := ECS_System_Description{
+	tick := ECS_System_Description {
 		name       = ECS_SYSTEM_NAME_TICK,
 		execute    = ecs_system_world_tick,
 		read_mask  = Core.access_mask_empty(),

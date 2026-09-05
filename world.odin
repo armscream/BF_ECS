@@ -152,37 +152,6 @@ world_register_component :: proc(
 	return component_register(T, &world.registry, name, table, flags)
 }
 
-//* View Creation
-world_view_create :: proc(
-	world: ^World,
-	name: string,
-	includes: []^ode.Shared_Table,
-	excludes: []^ode.Shared_Table = nil,
-	any_of: []^ode.Shared_Table = nil,
-	filter: proc(row: ^ode.View_Row, user_data: rawptr) -> bool = nil,
-) -> ^View {
-	if world == nil do return nil
-	view := new(View, world.allocator)
-	if !view_init(view, &world.gameplay, name, includes, excludes, any_of, filter) {
-		free(view, world.allocator)
-		return nil
-	}
-	append(&world.views, view)
-	return view
-}
-//* View destruction
-world_view_destroy :: proc(world: ^World, view: ^View) {
-	if world == nil || view == nil do return
-	for i := 0; i < len(world.views); i += 1 {
-		if world.views[i] == view {
-			view_destroy(view)
-			free(view, world.allocator)
-			unordered_remove(&world.views, i)
-			return
-		}
-	}
-}
-
 //* Command Buffer Initialization
 world_init_command_buffers :: proc(world: ^World) -> bool {
 	if world == nil do return false
