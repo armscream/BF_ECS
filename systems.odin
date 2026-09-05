@@ -19,28 +19,7 @@ package BF_ECS
 
 import "../../Core"
 import "core:log"
-
-//* SYSTEM ACCESS
-ecs_access_mask :: proc(component: Component_ID) -> Core.Access_Mask {
-	id := u32(component)
-
-	assert(id != u32(COMPONENT_INVALID), "Invalid component ID")
-	assert(id <= 64, "BF_ECS component ID exceeds Core scheduler access-mask capacity")
-
-	return Core.Access_Mask{
-		bits = u64(1) << u64(id - 1),
-	}
-}
-
-ecs_access_mask_from_components :: proc(
-	components: []Component_ID,
-) -> Core.Access_Mask {
-	mask := Core.access_mask_empty()
-
-	for component in components {mask.bits |= ecs_access_mask(component).bits}
-
-	return mask
-}
+import ode "/ode_ecs/src"
 
 //* SYSTEM CONTEXT
 ecs_system_world :: #force_inline proc(
@@ -87,26 +66,85 @@ ecs_system_command_buffer :: #force_inline proc(
 	return world_command_buffer(world, ctx.worker_id)
 }
 
-//* BUILT-IN SYSTEMS
+//* SYSTEM REGISTRATION HELPERS
+ECS_System_Description :: struct {
+	name: string,
+	execute: ECS_System_Proc,
+	read_mask: Core.Access_Mask,
+	write_mask: Core.Access_Mask,
+	stage: Core.System_Stage,
+}
+ECS_System_Proc :: proc(rawptr)
+
+ecs_register_system :: proc(
+	api: ^Core.Component_Registration_API,
+	ctx: ^Core.Lib_Context,
+	description: ECS_System_Description,
+) -> bool {
+	if api == nil || ctx == nil do return false
+	return api.add_system(
+		ctx,
+		Core.System_Registration{
+			name = description.name,
+			execute = description.execute,
+			info = Core.System_Info{
+				read_mask = description.read_mask,
+				write_mask = description.write_mask,
+				stage = description.stage,
+			},
+		},
+	)
+}
+
+//* ACCESS MASK HELPERS
+ecs_access_none :: #force_inline proc() -> Core.Access_Mask {
+	return Core.access_mask_empty()
+}
+ecs_access_mask_from_bits :: #force_inline proc(bits: u64) -> Core.Access_Mask {
+	return Core.access_mask_from_bits(bits)
+}
+
+//* BUILT IN SYSTEMS
 ECS_SYSTEM_NAME_TICK :: "ECS.WorldTick"
-
-ecs_system_world_tick :: proc(rawptr_ctx: rawptr) {
+ecs_system_world_tick :: proc(rawptr_ctx: rawptr){
 	if rawptr_ctx == nil do return
-	ctx := cast(^Core.Scheduler_System_Context)rawptr_ctx
 
+	ctx := cast(^Core.Scheduler_System_Context)rawptr_ctx
 	world := ecs_system_world(ctx)
-	if world == nil do return 
+
+	if world == nil do return
 
 	world.tick += 1
 	world.frame_idx = ecs_system_frame_index(ctx)
 
 	when BF_ECS_LOG_TICK {
 		log.infof(
-			"[ECS] tick=%d frame=%d dt=%.4f worker=%d",
+			"[BF_ECS] tick=%d frame=%d dt=%.4f worker=%d",
 			world.tick,
 			world.frame_idx,
 			ecs_system_dt(ctx),
 			ecs_system_worker_id(ctx),
+		)
+	}
+}
+
+//* COMMAND BUFFER REPLAY
+//* IMPORTANT:
+// Replay is NOT registered as a normal DAG system.
+//
+// Command buffers are recorded concurrently by workers and must be replayed
+// only after all recording systems have completed.
+//
+// Until BF_DAG has an explicit synchronization/barrier node, replay belongs
+// to the engine's frame synchronization point, not the ordinary system DAG.
+ecs_replay_command_buffers :: proc(
+	world: ^World,
+) {
+	if world == nil do return
+
+	for i in 0..<len(world.command_buffers) {
+		ode.command_buffer__replay(
+			&world.command_buffers[i],
 		)
 	}
 }
@@ -117,20 +155,16 @@ ecs_register_builtin_systems :: proc(
 	ctx: ^Core.Lib_Context,
 ) -> bool {
 	if api == nil || ctx == nil do return false
-	ok := api.add_system(
-		ctx,
-		Core.System_Registration{
-			name    = ECS_SYSTEM_NAME_TICK,
-			execute = ecs_system_world_tick,
 
-			info = Core.System_Info{
-				read_mask  = Core.access_mask_empty(),
-				write_mask = Core.access_mask_empty(),
-				stage      = .PreUpdate,
-			},
-		},
-	)
-	if !ok {
+	tick := ECS_System_Description{
+		name       = ECS_SYSTEM_NAME_TICK,
+		execute    = ecs_system_world_tick,
+		read_mask  = Core.access_mask_empty(),
+		write_mask = Core.access_mask_empty(),
+		stage      = .PreUpdate,
+	}
+
+	if !ecs_register_system(api, ctx, tick) {
 		log.error("[BF_ECS] failed to register ECS.WorldTick")
 		return false
 	}
@@ -140,4 +174,3 @@ ecs_register_builtin_systems :: proc(
 
 //* DEBUG
 BF_ECS_LOG_TICK :: false
-BF_ECS_LOG_SYSTEM_WARN :: true
