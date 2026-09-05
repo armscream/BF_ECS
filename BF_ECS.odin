@@ -90,13 +90,46 @@ module_load :: proc(ctx: ^Core.Lib_Context) -> bool {
 }
 
 module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
+	//* Service registry
+	service_registry_raw := Core.lib_context_query(
+		ctx,
+		Core.CORE_LIB_INTERFACE_SERVICE_REGISTRY,
+		Core.SERVICE_REGISTRY_API_VERSION,
+	)
+	if service_registry_raw == nil {
+		log.error("[BF_ECS] service_registry interface unavailable")
+		return false
+	}
+	service_registry := cast(^Core.Service_Registry)service_registry_raw
+	//* Scheduler
+	scheduler_handle, scheduler_found := Core.service_find(service_registry, "BF_DAG.Scheduler")
+	if !scheduler_found {
+		log.error("[BF_ECS] BF_DAG scheduler service unavailable")
+		return false
+	}
+	scheduler_raw := Core.service_get(service_registry, scheduler_handle)
+	if scheduler_raw == nil {
+		log.error("[BF_ECS] BF_DAG scheduler service instance unavailable")
+		return false
+	}
+	scheduler := cast(^Core.Scheduler_Service)scheduler_raw
 	// *Allocate the World.
+	worker_count := scheduler.worker_count(scheduler)
+	if worker_count < 1 {
+		log.error("[BF_ECS] scheduler.worker_count() returned < 1")
+		return false
+	}
+	settings := WORLD_DEFAULT_SETTINGS
+	settings.command_buffers_capacity = worker_count
 	MODULE_STATE_VALUE.world = world_create(allocator = context.allocator)
 	if MODULE_STATE_VALUE.world == nil {
 		log.error("[BF_ECS] failed to allocate World")
 		return false
 	}
-
+	assert(
+		len(MODULE_STATE_VALUE.world.command_buffers) == worker_count,
+		"BF_ECS command buffer count must equal scheduler worker count",
+	)
 	// Look up the registration API so we can declare systems + the
 	// World service before the component manager promotes us.
 	api_raw := Core.lib_context_query(
@@ -116,7 +149,7 @@ module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
 	// dependencies from System_Info masks/stage; for the minimum
 	// cut both systems sit at stage = .Update with empty masks,
 	// which the engine maps to default `.Update` Stage info.
-	if !ecs_register_builtin_systems(api, ctx){
+	if !ecs_register_builtin_systems(api, ctx) {
 		log.error("[BF_ECS] Failed to register builtin ECS systems.")
 		world_destroy(MODULE_STATE_VALUE.world)
 		return false
