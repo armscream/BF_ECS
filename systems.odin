@@ -24,20 +24,8 @@ import "core:log"
 ecs_access_mask :: proc(component: Component_ID) -> Core.Access_Mask {
 	id := u32(component)
 
-	if id == u32(COMPONENT_INVALID) do return Core.access_mask_empty()
-
-	// Core currently provides 64 access bits.
-	// Component IDs are one-based.
-	if id > 64 {
-		when BF_ECS_LOG_SYSTEM_WARN {
-			log.warnf(
-				"[BF_ECS] component ID %d exceeds the current scheduler access mask",
-				id,
-			)
-		}
-
-		return Core.access_mask_empty()
-	}
+	assert(id != u32(COMPONENT_INVALID), "Invalid component ID")
+	assert(id <= 64, "BF_ECS component ID exceeds Core scheduler access-mask capacity")
 
 	return Core.Access_Mask{
 		bits = u64(1) << u64(id - 1),
@@ -88,6 +76,15 @@ ecs_system_worker_id :: #force_inline proc(
 ) -> int {
 	if ctx == nil do return -1
 	return ctx.worker_id
+}
+
+ecs_system_command_buffer :: #force_inline proc(
+	ctx: ^Core.Scheduler_System_Context,
+) -> ^ode.Command_Buffer {
+	if ctx == nil || ctx.frame == nil do return nil
+	world := cast(^World)ctx.frame.world.ptr
+	if world == nil do return nil
+	return world_command_buffer(world, ctx.worker_id)
 }
 
 //* BUILT-IN SYSTEMS

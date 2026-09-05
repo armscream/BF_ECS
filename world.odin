@@ -14,13 +14,18 @@ World_Settings :: struct {
 	gameplay_views_capacity:  int,
 	// # of cmd buffers
 	command_buffers_capacity: int,
+	command_buffer_commands: int,
+	command_buffer_payload: int,
 }
 // Sensible first default.
 WORLD_DEFAULT_SETTINGS :: World_Settings {
 	entities_capacity        = 65_536, // This is intentionally a max capacity.
 	gameplay_tables_capacity = 128,
 	gameplay_views_capacity  = 64,
-	command_buffers_capacity = 4,
+	// This is only fallback for standalone BF_ECS usage. The engine should overwrite with BF_DAG worker count.
+	command_buffers_capacity = 1, 
+	command_buffer_commands = 1024,
+	command_buffer_payload = 1024 * 64,
 }
 
 //* WORLD DATABASE
@@ -42,8 +47,7 @@ World :: struct {
 	entities:        Entity_Store,
 	gameplay:        Database, // main gameplay DB
 	registry:        Component_Registry, // Component schema
-	views:           [dynamic]^View, // Persistent queries.
-	command_buffers: []Command_Buffer, // Persistent cmd buffers.
+	command_buffers: []ode.Command_Buffer, // 1 cmd buffer per scheduler worker.
 	// frame state
 	tick:            u64,
 	frame_idx:       u64,
@@ -57,16 +61,12 @@ world_create :: proc(
 	world.allocator = allocator
 	world.settings = settings
 	// Shared entity space
-	err := ode.overbase_init(
+	ode.overbase_init(
 		&world.overbase,
 		settings.entities_capacity,
 		4, // Reserve room for multiple DB 
 		allocator,
 	)
-	if err != nil {
-		free(world, allocator)
-		return nil
-	}
 	// Entity store
 	entity_store_init(&world.entities, &world.overbase)
 	// component registry
@@ -86,9 +86,12 @@ world_create :: proc(
 		settings.command_buffers_capacity,
 		8,
 	) {
-		entity_store_destroy(&world.entities)
-		ode.overbase_terminate(&world.overbase)
+		world_destroy(world)
 		free(world, allocator)
+		return nil
+	}
+	if !world_init_command_buffers(world) {
+		world_destroy(world)
 		return nil
 	}
 
@@ -99,18 +102,7 @@ world_create :: proc(
 world_destroy :: proc(world: ^World) {
 	if world == nil do return
 	// destroy persistent ECS objects
-	for buffer in world.command_buffers {
-		command_buffer_destroy(buffer)
-		free(buffer, world.allocator)
-	}
-	delete(world.command_buffers)
-	for view in world.views {
-		view_destroy(view)
-		free(view, world.allocator)
-	}
-	delete(world.views)
-	// DB must be terminated before their shared Overbase.
-	// ODE_ECS explicitly req's DB to detach before terminating the overbase.
+	world_destroy_command_buffers(world)
 	database_destroy(&world.gameplay)
 	component_registry_destroy(&world.registry)
 	entity_store_destroy(&world.entities)
@@ -191,31 +183,44 @@ world_view_destroy :: proc(world: ^World, view: ^View) {
 	}
 }
 
-//* Command Buffer Creation
-world_command_buffer_create :: proc(
-	world: ^World,
-	name: string,
-	commands_capacity: int = 4096,
-	payload_capacity: int = 256 * 1024,
-) -> ^Command_Buffer {
-	if world == nil do return nil
-	buffer := new(Command_Buffer, world.allocator)
-	if !command_buffer_init(buffer, &world.gameplay, name, commands_capacity, payload_capacity) {
-		free(buffer, world.allocator)
-		return nil
-	}
-	len(world.command_buffers) == scheduler_worker_count
-	return buffer
-}
-//* Command Buffer Destruction
-world_command_buffer_destroy :: proc(world: ^World, buffer: ^Command_Buffer) {
-	if world == nil || buffer == nil do return
-	for i := 0; i < len(world.command_buffers); i += 1 {
-		if world.command_buffers[i] == buffer {
-			command_buffer_destroy(buffer)
-			free(buffer, world.allocator)
-			unordered_remove(&world.command_buffers, i)
-			return
+//* Command Buffer Initialization
+world_init_command_buffers :: proc(world: ^World) -> bool {
+	if world == nil do return false
+	count := world.settings.command_buffers_capacity
+	if count <= 0 do return false
+	world.command_buffers = make([]ode.Command_Buffer, count, world.allocator)
+	for i in 0..<count {
+		if err := ode.command_buffer__init(
+			&world.command_buffers[i],
+			&world.gameplay.ecs,
+			world.settings.command_buffer_commands,
+			world.settings.command_buffer_payload,
+		); err != nil {
+			// Terminate everything already initialized.
+			for j in 0..<i {ode.command_buffer__terminate(&world.command_buffers[j])}
+			delete(world.command_buffers, world.allocator)
+			world.command_buffers = nil
+			return false
 		}
 	}
+	return true
+}
+//* Destroy command buffers.
+world_destroy_command_buffers :: proc(world: ^World) {
+	if world == nil do return
+	for &buffer in world.command_buffers {ode.command_buffer_terminate(&buffer)}
+	if len(world.command_buffers) > 0 {delete(world.command_buffers, world.allocator)}
+
+	world.command_buffers = nil
+}
+//* Worker buffer access
+world_command_buffer :: #force_inline proc(world: ^World, worker_id: int) -> ^ode.Command_Buffer {
+	if world == nil do return nil
+	if worker_id < 0 || worker_id >= len(world.command_buffers) do return nil
+	return &world.command_buffers[worker_id]
+}
+//* Reset cmd buffers after replay
+world_reset_command_buffers :: proc(world: ^World) {
+	if world == nil do return
+	for &buffer in world.command_buffers {ode.command_buffer__clear(&buffer)}
 }
