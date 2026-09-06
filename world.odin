@@ -14,8 +14,8 @@ World_Settings :: struct {
 	gameplay_views_capacity:  int,
 	// # of cmd buffers
 	command_buffers_capacity: int,
-	command_buffer_commands: int,
-	command_buffer_payload: int,
+	command_buffer_commands:  int,
+	command_buffer_payload:   int,
 }
 // Sensible first default.
 WORLD_DEFAULT_SETTINGS :: World_Settings {
@@ -23,9 +23,9 @@ WORLD_DEFAULT_SETTINGS :: World_Settings {
 	gameplay_tables_capacity = 128,
 	gameplay_views_capacity  = 64,
 	// This is only fallback for standalone BF_ECS usage. The engine should overwrite with BF_DAG worker count.
-	command_buffers_capacity = 1, 
-	command_buffer_commands = 1024,
-	command_buffer_payload = 1024 * 64,
+	command_buffers_capacity = 1,
+	command_buffer_commands  = 1024,
+	command_buffer_payload   = 1024 * 64,
 }
 
 //* WORLD DATABASE
@@ -46,12 +46,30 @@ World :: struct {
 	overbase:        ode.Overbase,
 	entities:        Entity_Store,
 	gameplay:        Database, // main gameplay DB
+	spatial:         Database, // Needed in future
+	network:         Database, // Needed in future
+	editor:          Database, // Needed in future
+
+	// Persistent semantic views
+	views:           World_Views,
 	registry:        Component_Registry, // Component schema
 	command_buffers: []ode.Command_Buffer, // 1 cmd buffer per scheduler worker.
 	// frame state
 	tick:            u64,
 	frame_idx:       u64,
 }
+
+World_Views :: struct {
+	// gameplay
+	transforms: ^View,
+	render_models: ^View,
+	// spatial
+	chunk_membership: ^View,
+	spatial_bounds: ^View,
+	// network
+	replication: ^View,
+}
+
 //* INITIALIZATION
 world_create :: proc(
 	settings: World_Settings = WORLD_DEFAULT_SETTINGS,
@@ -158,7 +176,7 @@ world_init_command_buffers :: proc(world: ^World) -> bool {
 	count := world.settings.command_buffers_capacity
 	if count <= 0 do return false
 	world.command_buffers = make([]ode.Command_Buffer, count, world.allocator)
-	for i in 0..<count {
+	for i in 0 ..< count {
 		if err := ode.command_buffer__init(
 			&world.command_buffers[i],
 			&world.gameplay.ecs,
@@ -166,7 +184,7 @@ world_init_command_buffers :: proc(world: ^World) -> bool {
 			world.settings.command_buffer_payload,
 		); err != nil {
 			// Terminate everything already initialized.
-			for j in 0..<i {ode.command_buffer__terminate(&world.command_buffers[j])}
+			for j in 0 ..< i {ode.command_buffer__terminate(&world.command_buffers[j])}
 			delete(world.command_buffers, world.allocator)
 			world.command_buffers = nil
 			return false
