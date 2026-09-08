@@ -4,28 +4,47 @@ package BF_ECS
 import ode "/ode_ecs/src"
 import "base:runtime"
 
+//* DB SETTINGS
+World_Database_Settings :: struct {
+	tables_capacity:          int,
+	views_capacity:           int,
+	tiny_tables_capacity:     int,
+	pair_tables_capacity:     int,
+	command_buffers_capacity: int,
+	observers_capacity:       int,
+}
 //* WORLD SETTINGS
 World_Settings :: struct {
 	// maximum # of simultaneously alive entities.
-	entities_capacity:        u32,
-	// # of component tables expected in the main gameplay DB.
-	gameplay_tables_capacity: int,
-	// # of preallocated views.
-	gameplay_views_capacity:  int,
+	entities_capacity:       u32,
+	gameplay:                World_Database_Settings,
+	spatial:                 World_Database_Settings,
+	network:                 World_Database_Settings,
+	editor:                  World_Database_Settings,
 	// # of cmd buffers
-	command_buffers_capacity: int,
-	command_buffer_commands:  int,
-	command_buffer_payload:   int,
+	command_buffer_commands: int,
+	command_buffer_payload:  int,
+	initial_view_capacity:   int,
+}
+// Sensible first default.
+WORLD_DEFAULT_DATABASE_SETTINGS :: World_Database_Settings {
+    tables_capacity          = 128,
+    views_capacity           = 64,
+    tiny_tables_capacity     = 32,
+    pair_tables_capacity     = 16,
+    command_buffers_capacity = 32,
+    observers_capacity       = 16,
 }
 // Sensible first default.
 WORLD_DEFAULT_SETTINGS :: World_Settings {
-	entities_capacity        = 65_536, // This is intentionally a max capacity.
-	gameplay_tables_capacity = 128,
-	gameplay_views_capacity  = 64,
-	// This is only fallback for standalone BF_ECS usage. The engine should overwrite with BF_DAG worker count.
-	command_buffers_capacity = 1,
-	command_buffer_commands  = 1024,
-	command_buffer_payload   = 1024 * 64,
+    entities_capacity = 65_536,
+    gameplay = WORLD_DEFAULT_DATABASE_SETTINGS,
+    spatial  = WORLD_DEFAULT_DATABASE_SETTINGS,
+    network  = WORLD_DEFAULT_DATABASE_SETTINGS,
+    editor   = WORLD_DEFAULT_DATABASE_SETTINGS,
+    command_buffer_commands = 1024,
+    command_buffer_payload  = 1024 * 64,
+    initial_view_capacity = 64,
 }
 
 //* WORLD DATABASE
@@ -35,24 +54,24 @@ World_Database :: struct {
 	// ODE_ECS db,
 	ecs:  ode.Database,
 }
+
 //* WORLD
 World :: struct {
 	allocator:       runtime.Allocator,
 	settings:        World_Settings,
 	// Shared entity namespace
-	// Every DB attached to this Overbase sees the same Entity IDs.
-	// This is the foundation for cross-DB entity references btw: GameplayDB, SpatialDB, NetworkDB, EditorDB
-	// All refer to the same entity IDs
 	overbase:        ode.Overbase,
 	entities:        Entity_Store,
+	// ECS databases
 	gameplay:        Database, // main gameplay DB
 	spatial:         Database, // Needed in future
 	network:         Database, // Needed in future
 	editor:          Database, // Needed in future
-
+	custom:          Database,
 	// Persistent semantic views
 	views:           World_Views,
-	registry:        Component_Registry, // Component schema
+	// Global schema.
+	registry:        Component_Registry,
 	command_buffers: []ode.Command_Buffer, // 1 cmd buffer per scheduler worker.
 	// frame state
 	tick:            u64,
@@ -61,13 +80,13 @@ World :: struct {
 
 World_Views :: struct {
 	// gameplay
-	transforms: ^View,
-	render_models: ^View,
+	transforms:       ^View,
+	render_models:    ^View,
 	// spatial
 	chunk_membership: ^View,
-	spatial_bounds: ^View,
+	spatial_bounds:   ^View,
 	// network
-	replication: ^View,
+	replication:      ^View,
 }
 
 //* INITIALIZATION
@@ -210,4 +229,17 @@ world_command_buffer :: #force_inline proc(world: ^World, worker_id: int) -> ^od
 world_reset_command_buffers :: proc(world: ^World) {
 	if world == nil do return
 	for &buffer in world.command_buffers {ode.command_buffer__clear(&buffer)}
+}
+//* Create views
+world_view_create :: proc(world: ^World, database: Database_Kind, name: string  , includes: []^ode.Shared_Table, excludes: []^ode.Shared_Table = nil, any_of: []^ode.Shared_Table = nil, filter: proc(row: ^ode.View_Row, user_data: rawptr)->bool = nil) -> ^View {
+	if world == nil do return nil 
+	db := world_database(world, database)
+	if db == nil || !db.initialized do return nil
+	view := new(View, world.allocator)
+	if !view_init(view, db, name, includes, excludes, any_of, filter){
+		free(veiw, world.allocator)
+		return nil
+	}
+	append(&world.views, view)
+	return view
 }

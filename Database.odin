@@ -67,3 +67,29 @@ database_is_valid :: proc(db: ^Database) -> bool {
 	if db == nil || !db.initialized do return false
 	return ode.is_valid(&db.ecs)
 }
+world_database :: #force_inline proc(
+    world: ^World,
+    kind: Database_Kind,
+) -> ^Database {
+    if world == nil do return nil
+
+    switch kind {
+    case .Gameplay:
+        return &world.gameplay
+    case .Spatial:
+        return &world.spatial
+    case .Network:
+        return &world.network
+    case .Editor:
+        return &world.editor
+	case .Custom:
+		return &world.custom
+    case:
+        return nil
+    }
+}
+world_database_ecs :: #force_inline proc(world: ^World, kind: Database_Kind) -> ^ode.Database {
+	db := world_database(world, kind)
+	if db == nil || !db.initialized do return nil
+	return &db.ecs
+}
