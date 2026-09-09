@@ -11,28 +11,6 @@ import "base:runtime"
 Component_ID :: distinct u32
 COMPONENT_INVALID :: Component_ID(0)
 
-//* COMPONENT BINDING
-Component_Binding :: struct {
-	database: Database_Kind,
-	storage:  Component_Storage,
-	table:    rawptr,
-	add:      Component_Add_Proc,
-	get:      Component_Get_Proc,
-	has:      Component_Has_Proc,
-	remove:   Component_Remove_Proc,
-}
-
-//* COMPONENT DESCRIPTOR
-Component_Descriptor :: struct {
-	id:       Component_ID,
-	name:     string,
-	type_id:  typeid,
-	size:     int,
-	align:    int,
-	flags:    Component_Flags,
-	bindings: [dynamic]Component_Binding,
-}
-
 //* COMPONENT STORAGE
 Component_Storage :: enum u8 {
 	Table,
@@ -40,15 +18,6 @@ Component_Storage :: enum u8 {
 	Tiny_Table,
 	Tag_Table,
 	Arch_Table,
-}
-
-//* COMPONENT REGISTRY
-Component_Registry :: struct {
-	allocator:  runtime.Allocator,
-	next_id:    Component_ID,
-	components: [dynamic]Component_Descriptor,
-	by_name:    map[string]Component_ID,
-	by_type:    map[typeid]Component_ID,
 }
 
 //* COMPONENT FLAGS
@@ -77,6 +46,30 @@ Component_Add_Proc :: proc(table: rawptr, entity: Entity) -> rawptr
 Component_Get_Proc :: proc(table: rawptr, entity: Entity) -> rawptr
 Component_Remove_Proc :: proc(table: rawptr, entity: Entity) -> bool
 Component_Has_Proc :: proc(table: rawptr, entity: Entity) -> bool
+
+//* COMPONENT BINDING
+// A component type may have multiple storage instances. Ex: Transform: Gameplay -> Table(Transform), Editor -> Table(Transform)
+// Component ID identifies Transform. Component_Binding identifies one concrete storage instance.
+Component_Binding :: struct {
+	database: Database_Kind,
+	storage:  Component_Storage,
+	table:    rawptr,
+	add:      Component_Add_Proc,
+	get:      Component_Get_Proc,
+	has:      Component_Has_Proc,
+	remove:   Component_Remove_Proc,
+}
+
+//* COMPONENT DESCRIPTOR
+Component_Descriptor :: struct {
+	id:       Component_ID,
+	name:     string,
+	type_id:  typeid,
+	size:     int,
+	align:    int,
+	flags:    Component_Flags,
+	bindings: [dynamic]Component_Binding,
+}
 
 //* GENERIC TABLE OPERATIONS
 //renamed from component_add
@@ -113,62 +106,6 @@ component_find_table :: proc(
 	if binding == nil do return nil
 	return binding.table
 }
-component_register_table :: proc(
-	$T: typeid,
-	registry: ^Component_Registry,
-	database: Database_Kind,
-	name: string,
-	table: ^ode.Table(T),
-	flags: Component_Flags = {.Runtime},
-) -> Component_ID {
-	assert(registry != nil)
-	assert(table != nil)
-	assert(name != "")
-	type_id := typeid_of(T)
-	id := COMPONENT_INVALID
-	if existing, ok := registry.by_type[type_id]; ok {
-		id = existing
-	} else if existing, ok := registry.by_name[name]; ok {
-		id = existing
-	} else {
-		id = registry.next_id
-		registry.next_id += 1
-		descriptor := Component_Descriptor {
-			id      = id,
-			name    = name,
-			type_id = type_id,
-			size    = sizeof(T),
-			align   = alignof(T),
-			flags   = flags,
-		}
-		append(&registry.components, descriptor)
-
-		registry.by_name[name] = id
-		registry.by_type[type_id] = id
-	}
-	descriptor := component_find(registry, id)
-	assert(descriptor != nil)
-
-	binding := Component_Binding {
-		database = database,
-		storage = .Table,
-		table = cast(rawptr)table,
-		add = proc(table: rawptr, entity: Entity) -> rawptr {
-			return component_add_table(T, table, entity)
-		},
-		get = proc(table: rawptr, entity: Entity) -> rawptr {
-			return component_get_table(T, table, entity)
-		},
-		has = proc(table: rawptr, entity: Entity) -> bool {
-			return component_has_table(T, table, entity)
-		},
-		remove = proc(table: rawptr, entity: Entity) -> bool {
-			return component_remove_table(T, table, entity)
-		},
-	}
-	if !component_binding_add(descriptor, binding) {return id}
-	return id
-}
 
 component_binding_find :: proc(
 	descriptor: ^Component_Descriptor,
@@ -191,40 +128,22 @@ component_binding_add :: proc(
 	append(&descriptor.bindings, binding)
 	return true
 }
-
-//* DESCRIPTOR CONSTRUCTION
-// the caller owns the actual Table(T). The registry does not dynamically construct arbitrary odin types
-// Odin's comp time generic system constructs the typed table and then registers it's erased representation here.
-component_descriptor_table :: proc(
-	$T: typeid,
+component_binding_get :: proc(
+	registry: ^Component_Registry,
 	id: Component_ID,
-	name: string,
-	table: ^ode.Table(T),
-	flags: Component_Flags,
-) -> Component_Descriptor {
-	return Component_Descriptor {
-		.id = id,
-		.name = name,
-		.type_id = typeid_of(T),
-		.size = sizeof(T),
-		.align = alignof(T),
-		.flags = flags,
-		table = cast(rawptr)table,
-		add = proc(table: rawptr, entity: Entity) -> rawptr {return component_add_table(
-				T,
-				table,
-				entity,
-			)},
-		get = proc(table: rawptr, entity: Entity) -> rawptr {return component_get_table(
-				T,
-				table,
-				entity,
-			)},
-		has = proc(table: rawptr, entity: Entity) -> bool {component_has_table(T, table, entity)},
-		remove = proc(table: rawptr, entity: Entity) -> bool {component_remove_table(
-				T,
-				table,
-				entity,
-			)},
-	}
+	database: Database_Kind,
+) -> ^Component_Binding {
+	if registry == nil do return nil
+	descriptor := component_find(registry, id)
+	if descriptor == nil do return nil
+	return component_binding_find(descriptor, database)
+}
+component_table :: proc(
+	registry: ^Component_Registry,
+	id: Component_ID,
+	database: Database_Kind,
+) -> rawptr {
+	binding := component_binding_get(registry, id, database)
+	if binding == nil do return nil
+	return binding.table
 }

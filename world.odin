@@ -21,38 +21,30 @@ World_Settings :: struct {
 	spatial:                 World_Database_Settings,
 	network:                 World_Database_Settings,
 	editor:                  World_Database_Settings,
-	// # of cmd buffers
-	command_buffer_commands: int,
+	// # of cmd buffers allocated up-front. The scheduler overwrites this with its worker count.
 	command_buffer_payload:  int,
+	command_buffer_commands: int,
 	initial_view_capacity:   int,
 }
 // Sensible first default.
 WORLD_DEFAULT_DATABASE_SETTINGS :: World_Database_Settings {
-    tables_capacity          = 128,
-    views_capacity           = 64,
-    tiny_tables_capacity     = 32,
-    pair_tables_capacity     = 16,
-    command_buffers_capacity = 32,
-    observers_capacity       = 16,
+	tables_capacity          = 128,
+	views_capacity           = 64,
+	tiny_tables_capacity     = 32,
+	pair_tables_capacity     = 16,
+	command_buffers_capacity = 32,
+	observers_capacity       = 16,
 }
 // Sensible first default.
 WORLD_DEFAULT_SETTINGS :: World_Settings {
-    entities_capacity = 65_536,
-    gameplay = WORLD_DEFAULT_DATABASE_SETTINGS,
-    spatial  = WORLD_DEFAULT_DATABASE_SETTINGS,
-    network  = WORLD_DEFAULT_DATABASE_SETTINGS,
-    editor   = WORLD_DEFAULT_DATABASE_SETTINGS,
-    command_buffer_commands = 1024,
-    command_buffer_payload  = 1024 * 64,
-    initial_view_capacity = 64,
-}
-
-//* WORLD DATABASE
-World_Database :: struct {
-	// name: ei: "Gameplay", "Editor", "Spatial", "Network"
-	name: string,
-	// ODE_ECS db,
-	ecs:  ode.Database,
+	entities_capacity       = 65_536,
+	gameplay                = WORLD_DEFAULT_DATABASE_SETTINGS,
+	spatial                 = WORLD_DEFAULT_DATABASE_SETTINGS,
+	network                 = WORLD_DEFAULT_DATABASE_SETTINGS,
+	editor                  = WORLD_DEFAULT_DATABASE_SETTINGS,
+	command_buffer_commands = 1024,
+	command_buffer_payload  = 1024 * 64,
+	initial_view_capacity   = 64,
 }
 
 //* WORLD
@@ -79,6 +71,8 @@ World :: struct {
 }
 
 World_Views :: struct {
+	// Registry of every view created via world_view_create.
+	all:              [dynamic]^View,
 	// gameplay
 	transforms:       ^View,
 	render_models:    ^View,
@@ -97,7 +91,7 @@ world_create :: proc(
 	world := new(World, allocator)
 	world.allocator = allocator
 	world.settings = settings
-	// Shared entity space
+	// SHARED ENTITY NAMESPACE
 	ode.overbase_init(
 		&world.overbase,
 		settings.entities_capacity,
@@ -107,8 +101,8 @@ world_create :: proc(
 	// Entity store
 	entity_store_init(&world.entities, &world.overbase)
 	// component registry
-	component_registry_init(&world.registry, allocator, settings.gameplay_tables_capacity)
-	// Gameplay DB
+	component_registry_init(&world.registry, allocator, settings.gameplay.tables_capacity)
+	//* GAMEPLAY
 	// This DB shares the overbase rather than creating it's own entity namespace.
 	if !database_init(
 		&world.gameplay,
@@ -116,17 +110,70 @@ world_create :: proc(
 		.Gameplay,
 		"Gameplay",
 		allocator,
-		settings.gameplay_tables_capacity,
-		settings.gameplay_views_capacity,
-		32,
-		8,
-		settings.command_buffers_capacity,
-		8,
+		settings.gameplay.tables_capacity,
+		settings.gameplay.views_capacity,
+		settings.gameplay.tables_capacity,
+		settings.gameplay.pair_tables_capacity,
+		settings.gameplay.command_buffers_capacity,
+		settings.gameplay.observers_capacity,
 	) {
 		world_destroy(world)
-		free(world, allocator)
 		return nil
 	}
+	//* SPATIAL
+	if !database_init(
+		&world.spatial,
+		&world.overbase,
+		.Spatial,
+		"Spatial",
+		allocator,
+		settings.spatial.tables_capacity,
+		settings.spatial.views_capacity,
+		settings.spatial.tables_capacity,
+		settings.spatial.pair_tables_capacity,
+		settings.spatial.command_buffers_capacity,
+		settings.spatial.observers_capacity,
+	) {
+		world_destroy(world)
+		return nil
+	}
+	//* NETWORK
+	if !database_init(
+		&world.network,
+		&world.overbase,
+		.Network,
+		"Network",
+		allocator,
+		settings.network.tables_capacity,
+		settings.network.views_capacity,
+		settings.network.tables_capacity,
+		settings.network.pair_tables_capacity,
+		settings.network.command_buffers_capacity,
+		settings.network.observers_capacity,
+	) {
+		world_destroy(world)
+		return nil
+	}
+	//* EDITOR
+	if !database_init(
+		&world.editor,
+		&world.overbase,
+		.Editor,
+		"Editor",
+		allocator,
+		settings.editor.tables_capacity,
+		settings.editor.views_capacity,
+		settings.editor.tables_capacity,
+		settings.editor.pair_tables_capacity,
+		settings.editor.command_buffers_capacity,
+		settings.editor.observers_capacity,
+	) {
+		world_destroy(world)
+		return nil
+	}
+
+	//* COMMAND BUFFERS
+	// The scheduler will overwrite the cap with the worker count.
 	if !world_init_command_buffers(world) {
 		world_destroy(world)
 		return nil
@@ -139,8 +186,15 @@ world_create :: proc(
 world_destroy :: proc(world: ^World) {
 	if world == nil do return
 	// destroy persistent ECS objects
+	world_destroy_views(world)
 	world_destroy_command_buffers(world)
+
+	database_destroy(&world.editor)
+	database_destroy(&world.network)
+	database_destroy(&world.spatial)
 	database_destroy(&world.gameplay)
+	database_destroy(&world.custom)
+
 	component_registry_destroy(&world.registry)
 	entity_store_destroy(&world.entities)
 	ode.overbase_terminate(&world.overbase)
@@ -165,7 +219,7 @@ world_create_entity :: proc(world: ^World) -> Entity {
 	return entity_create(&world.entities)
 }
 world_destroy_entity :: proc(world: ^World, entity: ^Entity) -> bool {
-	if world == nil do return false
+	if world == nil || entity == nil do return false
 	return entity_destroy(&world.entities, entity^)
 }
 world_entity_is_alive :: proc(world: ^World, entity: Entity) -> bool {
@@ -181,18 +235,19 @@ world_entity_count :: proc(world: ^World) -> int {
 world_register_component :: proc(
 	$T: typeid,
 	world: ^World,
+	database: Database_Kind,
 	name: string,
 	table: ^ode.Table(T),
 	flags: Component_Flags = {.Runtime},
 ) -> Component_ID {
 	assert(world != nil)
-	return component_register(T, &world.registry, name, table, flags)
+	return component_register_table(T, &world.registry, database, name, table, flags)
 }
 
 //* Command Buffer Initialization
 world_init_command_buffers :: proc(world: ^World) -> bool {
 	if world == nil do return false
-	count := world.settings.command_buffers_capacity
+	count := world.settings.gameplay.command_buffers_capacity
 	if count <= 0 do return false
 	world.command_buffers = make([]ode.Command_Buffer, count, world.allocator)
 	for i in 0 ..< count {
@@ -230,16 +285,61 @@ world_reset_command_buffers :: proc(world: ^World) {
 	if world == nil do return
 	for &buffer in world.command_buffers {ode.command_buffer__clear(&buffer)}
 }
-//* Create views
-world_view_create :: proc(world: ^World, database: Database_Kind, name: string  , includes: []^ode.Shared_Table, excludes: []^ode.Shared_Table = nil, any_of: []^ode.Shared_Table = nil, filter: proc(row: ^ode.View_Row, user_data: rawptr)->bool = nil) -> ^View {
-	if world == nil do return nil 
+
+//* VIEWS
+world_view_create :: proc(
+	world: ^World,
+	database: Database_Kind,
+	name: string,
+	includes: []^ode.Shared_Table,
+	excludes: []^ode.Shared_Table = nil,
+	any_of: []^ode.Shared_Table = nil,
+	filter: proc(row: ^ode.View_Row, user_data: rawptr) -> bool = nil,
+) -> ^View {
+	if world == nil do return nil
 	db := world_database(world, database)
 	if db == nil || !db.initialized do return nil
 	view := new(View, world.allocator)
-	if !view_init(view, db, name, includes, excludes, any_of, filter){
-		free(veiw, world.allocator)
+	if !view_init(view, db, name, includes, excludes, any_of, filter) {
+		free(view, world.allocator)
 		return nil
 	}
-	append(&world.views, view)
+	append(&world.views.all, view)
 	return view
+}
+world_destroy_views :: proc(world: ^World) {
+	if world == nil do return
+	views := &world.views
+
+	for v in world.views.all {
+		view_destroy(v)
+	}
+	for v in world.views.all {
+		if v != nil do free(v, world.allocator)
+	}
+	delete(world.views.all)
+
+	view_destroy(views.chunk_membership)
+	view_destroy(views.render_models)
+	view_destroy(views.replication)
+	view_destroy(views.spatial_bounds)
+	view_destroy(views.transforms)
+
+	if world.views.transforms != nil {
+		free(world.views.transforms, world.allocator)
+	}
+	if world.views.render_models != nil {
+		free(world.views.render_models, world.allocator)
+	}
+	if world.views.chunk_membership != nil {
+		free(world.views.chunk_membership, world.allocator)
+	}
+	if world.views.spatial_bounds != nil {
+		free(world.views.spatial_bounds, world.allocator)
+	}
+	if world.views.replication != nil {
+		free(world.views.replication, world.allocator)
+	}
+
+	views^ = {}
 }

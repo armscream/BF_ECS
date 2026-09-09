@@ -49,6 +49,10 @@ view_cap :: #force_inline proc(view: ^View) -> int {
     if view == nil || !view.initialized do return 0
     return ode.view_cap(&view.ecs)
 }
+view_database_kind :: #force_inline proc(view: ^View) -> Database_Kind {
+    if view == nil || !view.initialized || view.database == nil do return .Custom
+    return view.database.kind
+}
 
 //* Entities
 // this returns the View's curent dense entity array.

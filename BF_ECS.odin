@@ -120,7 +120,7 @@ module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
 		return false
 	}
 	settings := WORLD_DEFAULT_SETTINGS
-	settings.command_buffers_capacity = worker_count
+	// settings.command_buffers_capacity = worker_count // TODO: implement same thing
 	MODULE_STATE_VALUE.world = world_create(allocator = context.allocator)
 	if MODULE_STATE_VALUE.world == nil {
 		log.error("[BF_ECS] failed to allocate World")

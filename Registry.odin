@@ -28,6 +28,9 @@ component_registry_init :: proc(
 //* DESTRUCTION
 component_registry_destroy :: proc(registry: ^Component_Registry) {
 	if registry == nil do return
+	for &descriptor in registry.components {
+		if len(descriptor.bindings) > 0 {delete(descriptor.bindings)}
+	}
 	delete(registry.components)
 	delete(registry.by_name)
 	delete(registry.by_type)
@@ -37,6 +40,7 @@ component_registry_destroy :: proc(registry: ^Component_Registry) {
 component_register_table :: proc(
 	$T: typeid,
 	registry: ^Component_Registry,
+	database: Database_Kind,
 	name: string,
 	table: ^ode.Table(T),
 	flags: Component_Flags = {.Runtime},
@@ -44,31 +48,66 @@ component_register_table :: proc(
 	assert(registry != nil)
 	assert(table != nil)
 	assert(name != "")
-	// existing name
-	if existing, ok := registry.by_name[name]; ok {
-		return existing
-	}
-	// existing type
 	type_id := typeid_of(T)
-	if exists, ok := registry.by_type[type_id]; ok {
-		return exists
+	id := COMPONENT_INVALID
+	if existing, ok := registry.by_type[type_id]; ok {
+		id = existing
+	} else if existing, ok := registry.by_name[name]; ok {
+		// name collision with dif type is invalid
+		if descriptor := component_find(registry, existing); descriptor != nil {
+			if descriptor.type_id != type_id {
+				return COMPONENT_INVALID
+			}
+		}
+		id = existing
+	} else {
+		id = registry.next_id
+		registry.next_id += 1
+		descriptor := Component_Descriptor {
+			id      = id,
+			name    = name,
+			type_id = type_id,
+			size    = sizeof(T),
+			align   = alignof(T),
+			flags   = flags,
+		}
+		append(&registry.components, descriptor)
+
+		registry.by_name[name] = id
+		registry.by_type[type_id] = id
 	}
-	id := registry.next_id
-	registry.next_id += 1
+	descriptor := component_find(registry, id)
+	if descriptor == nil do return COMPONENT_INVALID
 
-	descriptor := component_descriptor_table(T, id, name, table, flags)
-	append(&registry.components, descriptor)
-	registry.by_name[name] = id
-	registry.by_type[type_id] = id
+	if existing := component_binding_find(descriptor, database); existing != nil do return id
 
+	binding := Component_Binding {
+		database = database,
+		storage = .Table,
+		table = cast(rawptr)table,
+		add = proc(table: rawptr, entity: Entity) -> rawptr {
+			return component_add_table(T, table, entity)
+		},
+		get = proc(table: rawptr, entity: Entity) -> rawptr {
+			return component_get_table(T, table, entity)
+		},
+		has = proc(table: rawptr, entity: Entity) -> bool {
+			return component_has_table(T, table, entity)
+		},
+		remove = proc(table: rawptr, entity: Entity) -> bool {
+			return component_remove_table(T, table, entity)
+		},
+	}
+	append(&descriptor.bindings, binding)
+	descriptor.flags |= flags
 	return id
 }
 //* LOOKUP
 component_find :: proc(registry: ^Component_Registry, id: Component_ID) -> ^Component_Descriptor {
 	if registry == nil || id == COMPONENT_INVALID do return nil
-	index := int(id)
-	if index < 0 || index >= len(registry.components) do return nil
-	return &registry.components[index]
+	index := int(id) - 1
+	if index <= 0 || index >= len(registry.components) + 1 do return nil
+	return &registry.components[index - 1]
 }
 component_find_by_name :: proc(
 	registry: ^Component_Registry,
@@ -94,7 +133,7 @@ component_id :: proc($T: typeid, registry: ^Component_Registry) -> Component_ID 
 	if registry == nil do return COMPONENT_INVALID
 	id, ok := registry.by_type[typeid_of(T)]
 	if !ok do return COMPONENT_INVALID
-	return id
+	return descriptor.id
 }
 
 //* ENUMERATION
@@ -106,4 +145,11 @@ component_at :: proc(registry: ^Component_Registry, index: int) -> ^Component_De
 	if registry == nil do return nil
 	if index < 0 || index >= len(registry.components) do return nil
 	return &registry.components[index]
+}
+
+//* REGISTER BUILT-IN COMPONENTS
+register_built_in_components :: proc(world: ^World) -> bool {
+	if world == nil do return false
+	// TODO: wire this
+	return true
 }
