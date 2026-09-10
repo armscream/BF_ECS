@@ -120,8 +120,10 @@ module_register :: proc(ctx: ^Core.Lib_Context) -> bool {
 		return false
 	}
 	settings := WORLD_DEFAULT_SETTINGS
-	// settings.command_buffers_capacity = worker_count // TODO: implement same thing
-	MODULE_STATE_VALUE.world = world_create(allocator = context.allocator)
+	// World owns one command buffer per scheduler worker. See World.odin
+	// `command_buffers: []ode.Command_Buffer, // 1 cmd buffer per scheduler worker.`
+	settings.gameplay.command_buffers_capacity = worker_count
+	MODULE_STATE_VALUE.world = world_create(settings, allocator = context.allocator)
 	if MODULE_STATE_VALUE.world == nil {
 		log.error("[BF_ECS] failed to allocate World")
 		return false

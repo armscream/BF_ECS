@@ -3,7 +3,6 @@ package BF_ECS
 
 import "../../Core"
 import ode "/ode_ecs/src"
-import hm "core:container/handle_map"
 import mth "../../Core/BF_Math"
 import "core:container/queue"
 
@@ -39,7 +38,7 @@ Map_Entity_Record :: struct {
 	id:               Entity,
 	chunk:            Chunk_ID,
 	flags:            Entity_Flags,
-	archetype:        ode.Arch_Table, //should be ode
+	archetype:        ode.Arch_Table, 
 	component_offset: u32,
 }
 Entity_Flags :: bit_set[Entity_Flag]

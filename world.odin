@@ -311,12 +311,8 @@ world_destroy_views :: proc(world: ^World) {
 	if world == nil do return
 	views := &world.views
 
-	for v in world.views.all {
-		view_destroy(v)
-	}
-	for v in world.views.all {
-		if v != nil do free(v, world.allocator)
-	}
+	for v in world.views.all {view_destroy(v)}
+	for v in world.views.all {if v != nil do free(v, world.allocator)}
 	delete(world.views.all)
 
 	view_destroy(views.chunk_membership)
@@ -325,21 +321,11 @@ world_destroy_views :: proc(world: ^World) {
 	view_destroy(views.spatial_bounds)
 	view_destroy(views.transforms)
 
-	if world.views.transforms != nil {
-		free(world.views.transforms, world.allocator)
-	}
-	if world.views.render_models != nil {
-		free(world.views.render_models, world.allocator)
-	}
-	if world.views.chunk_membership != nil {
-		free(world.views.chunk_membership, world.allocator)
-	}
-	if world.views.spatial_bounds != nil {
-		free(world.views.spatial_bounds, world.allocator)
-	}
-	if world.views.replication != nil {
-		free(world.views.replication, world.allocator)
-	}
+	if world.views.transforms != nil {free(world.views.transforms, world.allocator)}
+	if world.views.render_models != nil {free(world.views.render_models, world.allocator)}
+	if world.views.chunk_membership != nil {free(world.views.chunk_membership, world.allocator)}
+	if world.views.spatial_bounds != nil {free(world.views.spatial_bounds, world.allocator)}
+	if world.views.replication != nil {free(world.views.replication, world.allocator)}
 
 	views^ = {}
 }
