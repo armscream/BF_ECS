@@ -25,6 +25,11 @@ World_Settings :: struct {
 	command_buffer_payload:  int,
 	command_buffer_commands: int,
 	initial_view_capacity:   int,
+	// Row capacity of every built-in component table created by
+	// world_register_builtin_components.
+	builtin_capacity:        int,
+	// Optional chunk-index settings; pass nil to use defaults.
+	chunk_index:             ^Chunk_Index_Settings,
 }
 // Sensible first default.
 WORLD_DEFAULT_DATABASE_SETTINGS :: World_Database_Settings {
@@ -45,6 +50,7 @@ WORLD_DEFAULT_SETTINGS :: World_Settings {
 	command_buffer_commands = 1024,
 	command_buffer_payload  = 1024 * 64,
 	initial_view_capacity   = 64,
+	builtin_capacity        = BUILTIN_COMPONENT_DEFAULT_CAPACITY,
 }
 
 //* WORLD
@@ -64,7 +70,13 @@ World :: struct {
 	views:           World_Views,
 	// Global schema.
 	registry:        Component_Registry,
+	// Built-in component storage, owned by the world and published through
+	// `registry` by world_register_builtin_components.
+	builtin:            Builtin_Tables,
+	builtin_registered: bool,
 	command_buffers: []ode.Command_Buffer, // 1 cmd buffer per scheduler worker.
+	// Runtime chunk index: Chunk_ID -> Chunk_Runtime + entity membership.
+	chunk_index:     Chunk_Index,
 	// frame state
 	tick:            u64,
 	frame_idx:       u64,
@@ -179,6 +191,29 @@ world_create :: proc(
 		return nil
 	}
 
+	//* CHUNK INDEX
+	chunk_settings := CHUNK_INDEX_DEFAULT_SETTINGS
+	if world.settings.chunk_index != nil {
+		chunk_settings = world.settings.chunk_index^
+	}
+	if !chunk_index_init(&world.chunk_index, chunk_settings, allocator) {
+		world_destroy(world)
+		return nil
+	}
+
+	//* BUILT-IN COMPONENTS
+	// Every built-in component gets its table + registry entry here so
+	// downstream consumers (renderer extraction, replication, editor) can
+	// resolve them from the registry instead of creating storage themselves.
+	// A non-positive capacity opts out, which is only useful for tests that
+	// want to own the schema themselves.
+	if settings.builtin_capacity > 0 {
+		if !world_register_builtin_components(world, settings.builtin_capacity) {
+			world_destroy(world)
+			return nil
+		}
+	}
+
 	return world
 }
 
@@ -188,6 +223,7 @@ world_destroy :: proc(world: ^World) {
 	// destroy persistent ECS objects
 	world_destroy_views(world)
 	world_destroy_command_buffers(world)
+	chunk_index_destroy(&world.chunk_index)
 
 	database_destroy(&world.editor)
 	database_destroy(&world.network)
@@ -306,6 +342,141 @@ world_view_create :: proc(
 	}
 	append(&world.views.all, view)
 	return view
+}
+
+//* CHUNK SUBSYSTEM-STATE WRAPPERS
+// Thin pass-throughs so renderer / replication / gameplay code can ask
+// the World for the relevant chunk set without reaching into the index
+// directly. Internally they delegate to the index, keeping the World
+// the single entry point for chunk access.
+world_chunk_index :: #force_inline proc(world: ^World) -> ^Chunk_Index {
+	if world == nil do return nil
+	if !chunk_index_is_valid(&world.chunk_index) do return nil
+	return &world.chunk_index
+}
+
+world_chunk_set_states :: proc(
+	world: ^World,
+	id: Chunk_ID,
+	states: Chunk_States,
+) -> bool {
+	idx := world_chunk_index(world)
+	if idx == nil do return false
+	return chunk_index_set_states(idx, id, states)
+}
+
+world_chunk_toggle_state :: proc(
+	world: ^World,
+	id: Chunk_ID,
+	state: Chunk_State,
+	on: bool,
+) -> bool {
+	idx := world_chunk_index(world)
+	if idx == nil do return false
+	return chunk_index_toggle_state(idx, id, state, on)
+}
+
+world_chunk_has_state :: proc(
+	world: ^World,
+	id: Chunk_ID,
+	state: Chunk_State,
+) -> bool {
+	idx := world_chunk_index(world)
+	if idx == nil do return false
+	return chunk_index_has_state(idx, id, state)
+}
+
+world_chunk_states :: proc(
+	world: ^World,
+	id: Chunk_ID,
+) -> Chunk_States {
+	idx := world_chunk_index(world)
+	if idx == nil do return {}
+	return chunk_index_states(idx, id)
+}
+
+// Set the renderer-visible chunks: turns on .Active and .Visible in
+// one call, and turns both off if `on` is false. Streaming state is
+// untouched — callers are expected to gate this on chunk_index_get
+// returning a runtime whose `Chunk_Runtime_State` is at least .Loaded.
+world_chunk_set_visible :: proc(
+	world: ^World,
+	id: Chunk_ID,
+	on: bool,
+) -> bool {
+	idx := world_chunk_index(world)
+	if idx == nil do return false
+	ok_a := chunk_index_toggle_state(idx, id, .Active, on)
+	ok_v := chunk_index_toggle_state(idx, id, .Visible, on)
+	return ok_a && ok_v
+}
+
+world_chunk_set_simulated :: proc(
+	world: ^World,
+	id: Chunk_ID,
+	on: bool,
+) -> bool {
+	return world_chunk_toggle_state(world, id, .Simulated, on)
+}
+
+world_chunk_set_replicated :: proc(
+	world: ^World,
+	id: Chunk_ID,
+	on: bool,
+) -> bool {
+	return world_chunk_toggle_state(world, id, .Replicated, on)
+}
+
+world_chunk_set_navigable :: proc(
+	world: ^World,
+	id: Chunk_ID,
+	on: bool,
+) -> bool {
+	return world_chunk_toggle_state(world, id, .Navigable, on)
+}
+
+world_chunk_active_count :: #force_inline proc(world: ^World) -> int {
+	idx := world_chunk_index(world)
+	if idx == nil do return 0
+	return chunk_index_active_count(idx)
+}
+
+world_chunk_visible_count :: #force_inline proc(world: ^World) -> int {
+	idx := world_chunk_index(world)
+	if idx == nil do return 0
+	return chunk_index_visible_count(idx)
+}
+
+world_chunk_for_each_active :: proc(
+	world: ^World,
+	visit: Chunk_Visit_Proc,
+	user_data: rawptr = nil,
+) -> bool {
+	idx := world_chunk_index(world)
+	if idx == nil do return false
+	return chunk_index_for_each_active(idx, visit, user_data)
+}
+
+world_chunk_for_each_visible :: proc(
+	world: ^World,
+	visit: Chunk_Visit_Proc,
+	user_data: rawptr = nil,
+) -> bool {
+	idx := world_chunk_index(world)
+	if idx == nil do return false
+	return chunk_index_for_each_visible(idx, visit, user_data)
+}
+
+world_chunk_collect_visible :: #force_inline proc(world: ^World) -> []Chunk_ID {
+	idx := world_chunk_index(world)
+	if idx == nil do return nil
+	return chunk_index_collect_visible(idx)
+}
+
+world_chunk_collect_active :: #force_inline proc(world: ^World) -> []Chunk_ID {
+	idx := world_chunk_index(world)
+	if idx == nil do return nil
+	return chunk_index_collect_active(idx)
 }
 world_destroy_views :: proc(world: ^World) {
 	if world == nil do return

@@ -67,8 +67,8 @@ component_register_table :: proc(
 			id      = id,
 			name    = name,
 			type_id = type_id,
-			size    = sizeof(T),
-			align   = alignof(T),
+			size    = size_of(T),
+			align   = align_of(T),
 			flags   = flags,
 		}
 		append(&registry.components, descriptor)
@@ -106,8 +106,8 @@ component_register_table :: proc(
 component_find :: proc(registry: ^Component_Registry, id: Component_ID) -> ^Component_Descriptor {
 	if registry == nil || id == COMPONENT_INVALID do return nil
 	index := int(id) - 1
-	if index <= 0 || index >= len(registry.components) + 1 do return nil
-	return &registry.components[index - 1]
+	if index < 0 || index >= len(registry.components) do return nil
+	return &registry.components[index]
 }
 component_find_by_name :: proc(
 	registry: ^Component_Registry,
@@ -133,7 +133,7 @@ component_id :: proc($T: typeid, registry: ^Component_Registry) -> Component_ID 
 	if registry == nil do return COMPONENT_INVALID
 	id, ok := registry.by_type[typeid_of(T)]
 	if !ok do return COMPONENT_INVALID
-	return descriptor.id
+	return id
 }
 
 //* ENUMERATION
@@ -148,8 +148,6 @@ component_at :: proc(registry: ^Component_Registry, index: int) -> ^Component_De
 }
 
 //* REGISTER BUILT-IN COMPONENTS
-register_built_in_components :: proc(world: ^World) -> bool {
-	if world == nil do return false
-	// TODO: wire this
-	return true
-}
+// See Builtin.odin: `world_register_builtin_components` owns the concrete
+// table construction and registry publication for every built-in component.
+

@@ -85,6 +85,7 @@ module_world :: proc() -> ^World {
 //* LIFECYCLE
 module_load :: proc(ctx: ^Core.Lib_Context) -> bool {
 	_ = ctx
+	context.logger = log.create_console_logger()
 	log.info("[BF_ECS] loaded")
 	return true
 }
