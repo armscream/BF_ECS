@@ -92,6 +92,14 @@ Camera :: struct {
 	exposure:     f32,
 }
 
+// Tag component marking the entity whose camera the renderer should treat
+// as the currently active one. There is at most one entity with this
+// component per world; see BF_GPU.Extraction for the active-camera
+// selection rules.
+Camera_Active :: struct {
+	value: bool,
+}
+
 //* LIGHTING
 
 Light_Type :: enum u8 {

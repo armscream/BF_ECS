@@ -22,6 +22,35 @@ import mth "../../Core/BF_Math"
 import "base:runtime"
 import "core:math"
 
+//* CHUNK FLAGS
+// Persistent flags carried by a chunk entry (`.Persistent`, `.Streamable`,
+// `.Baked`, ...). These are static metadata describing what a chunk *is*,
+// not its runtime lifecycle — see `Chunk_Runtime_State` and `Chunk_States`
+// for the per-frame / per-subsystem bits.
+Chunk_Flags :: bit_set[Chunk_Flag]
+Chunk_Flag :: enum {
+	Persistent,
+	Streamable,
+	Loaded,
+	Visible,
+	Simulated,
+	Replicated,
+	Baked,
+}
+
+//* MAP FLAGS
+// Persistent flags carried by a serialized map document (`.Persistent`,
+// `.Streamable`, `.Editor`, `.Runtime`). BF_MapDB writes the bitset into
+// the BMAP metadata section; BF_MapDB consumers use them to decide whether
+// the document is editor-only, runtime-loadable, etc.
+Map_Flags :: bit_set[Map_Flag]
+Map_Flag :: enum u8 {
+	Streaming,
+	Persistent,
+	Editor,
+	Runtime,
+}
+
 //* CHUNK RUNTIME STATE
 // Streaming lifecycle of a chunk. Independent from the per-subsystem
 // `Chunk_State` bits: the lifecycle describes whether the chunk is
